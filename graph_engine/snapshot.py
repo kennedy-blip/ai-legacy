@@ -29,6 +29,10 @@ VERSION: Final = 1
 
 #: Never exported: where the checkout lives on the exporting machine.
 _PRIVATE_PROPERTIES: Final = frozenset({"workspace_path"})
+#: Wall-clock values, left out of a reproducible export so identical graphs give identical files.
+_VOLATILE_REPOSITORY: Final = frozenset({"ingested_at", "duration_seconds"})
+_VOLATILE_STATS: Final = frozenset({"duration_seconds"})
+_VOLATILE_RUNTIME: Final = frozenset({"first_seen", "last_seen"})
 _SKIPPED_LABELS: Final = frozenset({NodeLabel.INGESTION_JOB})
 _PAGE: Final = 500
 
@@ -83,13 +87,16 @@ def export_repository(
     *,
     include_runtime: bool = True,
     overrides: Mapping[str, Any] | None = None,
+    reproducible: bool = False,
 ) -> SnapshotSummary:
     """Write the graph of ``repository_id`` to ``target``.
 
     ``overrides`` replaces properties of the repository node in the export, e.g. to
     record a portable ``source`` instead of a path on this machine (``None`` removes
     a property). ``include_runtime=False`` leaves out relationships observed by
-    runtime telemetry.
+    runtime telemetry. ``reproducible=True`` drops wall-clock values (when the
+    ingestion ran and how long it took, when telemetry was first and last seen), so
+    the file changes only when the graph does.
     """
     root_id = make_id(NodeLabel.REPOSITORY, repository_id)
     root = store.get_node(root_id)
@@ -119,13 +126,20 @@ def export_repository(
             properties = {
                 key: value for key, value in node.properties.items() if key not in _PRIVATE_PROPERTIES
             }
-            if node.id == root_id and overrides:
-                properties.update(overrides)
+            if node.id == root_id:
+                if reproducible:
+                    properties = _without_clock(properties)
+                properties.update(overrides or {})
                 properties = {key: value for key, value in properties.items() if value is not None}
             handle.write(
                 _dump({"kind": "node", "id": node.id, "label": node.label.value, "properties": properties})
             )
         for edge in edges:
+            edge_properties = edge.properties
+            if reproducible and edge.type in RUNTIME_RELS:
+                edge_properties = {
+                    key: value for key, value in edge_properties.items() if key not in _VOLATILE_RUNTIME
+                }
             handle.write(
                 _dump(
                     {
@@ -133,11 +147,26 @@ def export_repository(
                         "source": edge.source,
                         "target": edge.target,
                         "type": edge.type.value,
-                        "properties": edge.properties,
+                        "properties": edge_properties,
                     }
                 )
             )
     return SnapshotSummary(repository_id, root.name, len(nodes), len(edges))
+
+
+def _without_clock(properties: dict[str, Any]) -> dict[str, Any]:
+    cleaned = {key: value for key, value in properties.items() if key not in _VOLATILE_REPOSITORY}
+    raw = cleaned.get("stats_json")
+    if isinstance(raw, str):
+        try:
+            stats = json.loads(raw)
+        except ValueError:
+            return cleaned
+        if isinstance(stats, dict):
+            for key in _VOLATILE_STATS:
+                stats.pop(key, None)
+            cleaned["stats_json"] = json.dumps(stats, sort_keys=True)
+    return cleaned
 
 
 def read_header(source: Path) -> dict[str, Any]:
@@ -171,7 +200,9 @@ def import_snapshot(
 
     ``workspace_path`` is the directory holding the repository's files on this
     machine; without it the graph is complete but source text cannot be shown.
-    ``replace`` removes an existing graph of the same repository first.
+    ``replace`` removes an existing graph of the same repository first. The
+    repository node is marked ``from_snapshot`` so clients can tell a loaded graph
+    from one analysed on this instance.
     """
     with _open(source, "r") as handle:
         header = _header(handle.readline(), source)
@@ -188,6 +219,7 @@ def import_snapshot(
                 if record["kind"] == "node":
                     if record["id"] == root_id:
                         properties.pop("workspace_path", None)
+                        properties["from_snapshot"] = True
                         if workspace_path is not None:
                             properties["workspace_path"] = str(workspace_path)
                     nodes.append(

@@ -102,6 +102,8 @@ def repository(node: GraphNode, counts: GraphCounts | None = None, *, detail: bo
         "tables": node.get("table_count", 0),
         "lines": node.get("line_count", 0),
         "is_demo": is_demo,
+        # Loaded from a pre-computed snapshot rather than analysed on this instance.
+        "from_snapshot": bool(node.get("from_snapshot")),
     }
     if detail:
         payload["warnings"] = node.get("warnings") or []

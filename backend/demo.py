@@ -145,6 +145,7 @@ def write_demo_snapshot(target: Path = SNAPSHOT_PATH) -> SnapshotSummary:
                 result.repository_id,
                 target,
                 overrides={"source": DEMO_SOURCE_LABEL, "source_kind": "bundled"},
+                reproducible=True,
             )
         finally:
             store.close()
