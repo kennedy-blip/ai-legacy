@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import SecretStr
+
+if TYPE_CHECKING:
+    from langchain_core.language_models.chat_models import BaseChatModel
 
 Provider = Literal["none", "openai", "anthropic", "ollama"]
 
@@ -47,7 +49,12 @@ def build_chat_model(config: LlmConfig) -> BaseChatModel | None:
         options["max_tokens"] = config.max_tokens
 
     if config.provider in ("openai", "ollama"):
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        try:
+            from langchain_openai import ChatOpenAI  # noqa: PLC0415
+        except ImportError as error:
+            raise LlmConfigurationError(
+                "the openai provider needs the langchain-openai package: pip install 'archaeo-code[llm]'"
+            ) from error
 
         base_url = config.base_url
         if config.provider == "ollama":

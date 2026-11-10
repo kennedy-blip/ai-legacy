@@ -1,0 +1,15 @@
+# Not needed to build or run the hosted demo.
+**/node_modules
+**/.next
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.env*
+!**/.env.example
+/data
+/tests
+/tools
+/docs
+/.github

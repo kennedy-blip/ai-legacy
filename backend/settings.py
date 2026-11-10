@@ -44,6 +44,10 @@ class Settings(BaseSettings):
 
     # ---- vector index
     vector_enabled: bool = True
+    #: ``memory``: in-process index rebuilt from the graph at start-up (no extra package).
+    #: ``qdrant``: Qdrant, embedded under ``data_dir`` or the server at ``qdrant_url``.
+    #: ``auto``: Qdrant when ``qdrant_url`` is set or the qdrant-client package is installed.
+    vector_backend: Literal["auto", "memory", "qdrant"] = "auto"
     #: URL of a Qdrant server. Empty = embedded Qdrant under ``data_dir`` (single process only).
     qdrant_url: str | None = None
     qdrant_api_key: SecretStr | None = None
@@ -79,14 +83,21 @@ class Settings(BaseSettings):
     blame_budget_seconds: float = 300.0
     github_enrichment: bool = True
     github_token: SecretStr | None = None
-    #: Ingest the synthetic demo repository when the graph is empty at start-up.
+    #: Add the synthetic demo repository when the graph is empty at start-up.
     seed_demo: bool = True
+    #: ``ingest``: build the demo git repository and run the real pipeline on it (needs git).
+    #: ``snapshot``: load the pre-computed graph shipped in ``examples/demo-monolith``.
+    #: ``auto``: ingest, falling back to the snapshot where git is unavailable.
+    demo_source: Literal["auto", "ingest", "snapshot"] = "auto"
 
     # ---- API
     #: When set, every API request must carry ``Authorization: Bearer <token>``.
     api_token: SecretStr | None = None
     cors_origins: Annotated[list[str], NoDecode] = Field(default_factory=list)
     telemetry_enabled: bool = True
+    #: Serve existing graphs only: ingestion, deletion and telemetry intake are refused.
+    #: For hosts without git, workers or durable storage (see ``backend.vercel_app``).
+    read_only: bool = False
 
     @field_validator("allowed_local_roots", "allowed_git_hosts", "cors_origins", mode="before")
     @classmethod
@@ -102,9 +113,11 @@ class Settings(BaseSettings):
     def _consistent(self) -> Self:
         if self.job_backend == "celery" and self.vector_enabled and not self.qdrant_url:
             raise ValueError(
-                "ARCHAEO_JOB_BACKEND=celery needs a Qdrant server (ARCHAEO_QDRANT_URL): embedded Qdrant "
-                "can only be opened by one process, and workers run in their own process"
+                "ARCHAEO_JOB_BACKEND=celery needs a Qdrant server (ARCHAEO_QDRANT_URL): the embedded and "
+                "in-process indexes belong to one process, and workers run in their own process"
             )
+        if self.vector_backend == "memory" and self.qdrant_url:
+            raise ValueError("ARCHAEO_VECTOR_BACKEND=memory conflicts with ARCHAEO_QDRANT_URL")
         if (
             self.job_backend == "celery"
             and self.graph_backend == "sqlite"

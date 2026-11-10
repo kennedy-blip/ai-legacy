@@ -89,8 +89,21 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
-    from backend.demo import DemoUnavailableError, build_demo_repository, demo_request  # noqa: PLC0415
+    from backend.demo import (  # noqa: PLC0415
+        DemoUnavailableError,
+        build_demo_repository,
+        demo_request,
+        write_demo_snapshot,
+    )
 
+    if args.write_snapshot:
+        try:
+            written = write_demo_snapshot()
+        except DemoUnavailableError as error:
+            print(error, file=sys.stderr)
+            return 1
+        print(f"snapshot of {written.repository_id}: {written.nodes} nodes, {written.edges} relationships")
+        return 0
     settings = get_settings()
     try:
         path = build_demo_repository(settings.demo_path, force=args.force)
@@ -99,6 +112,54 @@ def cmd_demo(args: argparse.Namespace) -> int:
         return 1
     print(f"demo repository at {path}", file=sys.stderr)
     return _ingest(_container(settings), demo_request(settings))
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    from pathlib import Path  # noqa: PLC0415
+
+    from graph_engine.snapshot import export_repository  # noqa: PLC0415
+
+    container = _container(get_settings())
+    try:
+        written = export_repository(
+            container.store, args.repository, Path(args.file), include_runtime=not args.no_runtime
+        )
+    except LookupError:
+        print(f"unknown repository {args.repository!r}; list them with `archaeo repos`", file=sys.stderr)
+        return 1
+    finally:
+        container.close()
+    print(f"exported {written.repository_id}: {written.nodes} nodes, {written.edges} relationships")
+    return 0
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    from pathlib import Path  # noqa: PLC0415
+
+    from graph_engine.snapshot import SnapshotError, import_snapshot  # noqa: PLC0415
+
+    sources = Path(args.sources).resolve() if args.sources else None
+    if sources is not None and not sources.is_dir():
+        print(f"{sources} is not a directory", file=sys.stderr)
+        return 1
+    container = _container(get_settings())
+    try:
+        loaded = import_snapshot(container.store, Path(args.file), workspace_path=sources)
+        if container.index is not None:
+            from rag_engine.indexer import RepositoryIndexer  # noqa: PLC0415
+
+            RepositoryIndexer(container.store, container.index).index_repository(
+                loaded.repository_id, sources
+            )
+    except (SnapshotError, OSError) as error:
+        print(f"import failed: {error}", file=sys.stderr)
+        return 1
+    finally:
+        container.close()
+    print(f"imported {loaded.repository_id}: {loaded.nodes} nodes, {loaded.edges} relationships")
+    if sources is None:
+        print("no --sources given: the graph is complete but source text cannot be shown", file=sys.stderr)
+    return 0
 
 
 def cmd_repos(_: argparse.Namespace) -> int:
@@ -186,7 +247,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     demo = commands.add_parser("demo", help="build and ingest the bundled synthetic demo repository")
     demo.add_argument("--force", action="store_true", help="rebuild the demo repository from scratch")
+    demo.add_argument(
+        "--write-snapshot",
+        action="store_true",
+        help="regenerate examples/demo-monolith/graph-snapshot.jsonl instead of ingesting",
+    )
     demo.set_defaults(handler=cmd_demo)
+
+    export = commands.add_parser("export", help="write the graph of a repository to a snapshot file")
+    export.add_argument("repository", help="repository id (see `archaeo repos`)")
+    export.add_argument("file", help="target path; a .gz suffix compresses")
+    export.add_argument("--no-runtime", action="store_true", help="leave out runtime-telemetry observations")
+    export.set_defaults(handler=cmd_export)
+
+    importer = commands.add_parser("import", help="load a snapshot file into the graph")
+    importer.add_argument("file")
+    importer.add_argument("--sources", metavar="DIR", help="directory holding the repository's files")
+    importer.set_defaults(handler=cmd_import)
 
     repos = commands.add_parser("repos", help="list ingested repositories")
     repos.set_defaults(handler=cmd_repos)

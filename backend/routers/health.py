@@ -38,6 +38,9 @@ def system(state: State) -> dict[str, Any]:
         "answer_mode": state.container.rag.mode,
         "llm_model": state.container.rag.llm_label,
         "embedding": state.container.index.embedder.name if state.container.index else None,
+        "vector_backend": state.container.index.backend if state.container.index else None,
+        # True on instances that only serve existing graphs: no ingestion, deletion or telemetry intake.
+        "read_only": settings.read_only,
         "telemetry_enabled": settings.telemetry_enabled,
         "local_sources_enabled": bool(settings.allowed_local_roots),
         "allowed_git_hosts": settings.allowed_git_hosts,

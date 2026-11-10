@@ -228,6 +228,21 @@ def render(text: str, index: int) -> str:
     return "\n".join(kept)
 
 
+def export_head(target: Path) -> int:
+    """Write every file as it stands after the last commit into ``target``; no git involved.
+
+    The result is byte-identical to the working tree :func:`build` leaves behind, so a
+    graph computed from the repository lines up with these files. Returns the file count.
+    """
+    last = COMMITS[-1].index
+    paths = [path for commit in COMMITS for path in commit.adds]
+    for path in paths:
+        destination = target / path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(render((SOURCE / path).read_text(encoding="utf-8"), last), encoding="utf-8")
+    return len(paths)
+
+
 def _git(target: Path, *args: str, env: dict[str, str] | None = None) -> str:
     completed = subprocess.run(
         ["git", *args],
@@ -286,8 +301,9 @@ def build(target: Path, *, force: bool = False) -> list[str]:
         hashes.append(_git(target, "rev-parse", "HEAD"))
 
     unreferenced = sorted(
-        str(path.relative_to(SOURCE)) for path in SOURCE.rglob("*") if path.is_file()
-        and str(path.relative_to(SOURCE)) not in created
+        str(path.relative_to(SOURCE))
+        for path in SOURCE.rglob("*")
+        if path.is_file() and str(path.relative_to(SOURCE)) not in created
     )
     if unreferenced:
         raise RuntimeError(f"files in src/ that no commit adds: {unreferenced}")

@@ -1,24 +1,40 @@
-"""Hybrid (dense + sparse) vector index on Qdrant."""
+"""Hybrid (dense + sparse) vector index: shared types, the in-process backend and the factory.
+
+Two interchangeable backends answer the same queries:
+
+``MemoryVectorIndex``
+    Pure Python and in process. Nothing is persisted: the application rebuilds it
+    from the graph at start-up. It needs no extra package and suits repositories up
+    to a few tens of thousands of scopes.
+
+``QdrantVectorIndex`` (:mod:`rag_engine.qdrant_index`)
+    Qdrant, either embedded in a directory or as a server. Persists vectors and
+    scales past what brute force can serve.
+
+Both rank by the same recipe: dense cosine candidates and sparse lexical candidates
+(IDF weighted), fused by reciprocal rank.
+"""
 
 from __future__ import annotations
 
-import hashlib
-import re
+import importlib.util
+import math
 import threading
-import uuid
-from collections.abc import Collection, Iterator, Sequence
-from contextlib import contextmanager
+from abc import ABC, abstractmethod
+from collections import Counter
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Final
-
-from qdrant_client import QdrantClient, models
+from operator import mul
+from typing import Any, Final, Literal
 
 from rag_engine.embeddings import Embedder, sparse_vector
 
-_NAMESPACE: Final = uuid.UUID("6f1d7a52-0b6e-4c57-9a55-2f3f0c6f8a11")
-_DENSE: Final = "dense"
-_SPARSE: Final = "lexical"
-_UPSERT_BATCH: Final = 128
+VectorBackend = Literal["auto", "memory", "qdrant"]
+
+#: Reciprocal-rank-fusion constant, the value Qdrant uses: a candidate at 0-based rank r scores 1 / (r + 2).
+_RRF_K: Final = 2
+#: Each ranking contributes this many times the requested limit before fusion.
+_PREFETCH_FACTOR: Final = 3
 
 
 class VectorIndexError(RuntimeError):
@@ -44,169 +60,37 @@ class VectorHit:
     payload: dict[str, Any]
 
 
-def point_id(node_id: str) -> str:
-    """Qdrant point ids must be UUIDs or integers; derive one deterministically."""
-    return str(uuid.uuid5(_NAMESPACE, node_id))
+class VectorIndex(ABC):
+    """Stores scope embeddings and answers hybrid similarity queries."""
 
+    embedder: Embedder
+    #: ``memory``, ``qdrant-embedded`` or ``qdrant``.
+    backend: str
+    #: False when the vectors live only in this process and must be rebuilt after a restart.
+    persistent: bool = True
 
-def collection_name(prefix: str, embedder: Embedder) -> str:
-    """One collection per vector space, so switching the embedder never mixes vectors."""
-    slug = re.sub(r"[^a-z0-9]+", "_", embedder.name.lower()).strip("_")[:40]
-    digest = hashlib.blake2b(embedder.name.encode(), digest_size=3).hexdigest()
-    return f"{prefix}_{slug}_{digest}"
-
-
-class VectorIndex:
-    """Stores scope embeddings and answers hybrid similarity queries.
-
-    ``location`` is ``":memory:"``, a directory for Qdrant's embedded (single
-    process) mode, or the URL of a Qdrant server. Embedded mode is not safe for
-    concurrent use, so every operation on it is serialised here.
-    """
-
-    def __init__(
-        self,
-        embedder: Embedder,
-        *,
-        location: str = ":memory:",
-        api_key: str | None = None,
-        prefix: str = "archaeo",
-        client: QdrantClient | None = None,
-    ) -> None:
-        self.embedder = embedder
-        self.location = location
-        self.is_server = location.startswith(("http://", "https://"))
-        if client is not None:
-            self._client = client
-        elif self.is_server:
-            self._client = QdrantClient(url=location, api_key=api_key or None, timeout=30)
-        elif location == ":memory:":
-            self._client = QdrantClient(location=":memory:")
-        else:
-            self._client = QdrantClient(path=location)
-        self._lock = threading.RLock()
-        self._prefix = prefix
-        self._collection: str | None = None
-        self._ready = False
-
-    # ---------------------------------------------------------------- lifecycle
-
-    @contextmanager
-    def _guard(self) -> Iterator[QdrantClient]:
-        if self.is_server:
-            yield self._client
-        else:
-            with self._lock:
-                yield self._client
-
-    @property
-    def collection(self) -> str:
-        if self._collection is None:
-            self._collection = collection_name(self._prefix, self.embedder)
-        return self._collection
-
+    @abstractmethod
     def ensure_collection(self) -> None:
-        if self._ready:
-            return
-        try:
-            with self._guard() as client:
-                if not client.collection_exists(self.collection):
-                    client.create_collection(
-                        self.collection,
-                        vectors_config={
-                            _DENSE: models.VectorParams(
-                                size=self.embedder.dimension, distance=models.Distance.COSINE
-                            )
-                        },
-                        sparse_vectors_config={
-                            _SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)
-                        },
-                    )
-                    if self.is_server:  # payload indexes are a no-op (and warn) in embedded mode
-                        for key in ("repository_id", "label"):
-                            client.create_payload_index(
-                                self.collection, field_name=key, field_schema=models.PayloadSchemaType.KEYWORD
-                            )
-        except Exception as error:
-            raise VectorIndexError(f"cannot prepare vector collection: {error}") from error
-        self._ready = True
+        """Create the underlying storage when it does not exist yet."""
 
+    @abstractmethod
     def ping(self) -> dict[str, Any]:
-        try:
-            with self._guard() as client:
-                collections = client.get_collections().collections
-        except Exception as error:
-            raise VectorIndexError(f"vector database unreachable: {error}") from error
-        return {
-            "backend": "qdrant" if self.is_server else "qdrant-embedded",
-            "collections": len(collections),
-            "embedder": self.embedder.name,
-        }
+        """Backend description; raises :class:`VectorIndexError` when unreachable."""
 
-    def close(self) -> None:
-        with self._lock:
-            self._client.close()
+    @abstractmethod
+    def close(self) -> None: ...
 
-    # ------------------------------------------------------------------- writes
-
+    @abstractmethod
     def upsert(self, documents: Sequence[IndexDocument]) -> int:
-        """Embed and store ``documents``; an existing point for the same node is replaced."""
-        if not documents:
-            return 0
-        self.ensure_collection()
-        written = 0
-        for start in range(0, len(documents), _UPSERT_BATCH):
-            batch = documents[start : start + _UPSERT_BATCH]
-            dense = self.embedder.embed_documents([document.text for document in batch])
-            points = []
-            for document, vector in zip(batch, dense, strict=True):
-                indices, values = sparse_vector(document.text)
-                points.append(
-                    models.PointStruct(
-                        id=point_id(document.node_id),
-                        vector={_DENSE: vector, _SPARSE: models.SparseVector(indices=indices, values=values)},
-                        payload={
-                            **document.payload,
-                            "node_id": document.node_id,
-                            "repository_id": document.repository_id,
-                            "label": document.label,
-                        },
-                    )
-                )
-            try:
-                with self._guard() as client:
-                    client.upsert(self.collection, points=points, wait=True)
-            except Exception as error:
-                raise VectorIndexError(f"vector upsert failed: {error}") from error
-            written += len(points)
-        return written
+        """Embed and store ``documents``; an existing entry for the same node is replaced."""
 
-    def delete_repository(self, repository_id: str) -> None:
-        try:
-            with self._guard() as client:
-                if not client.collection_exists(self.collection):
-                    return
-                client.delete(
-                    self.collection,
-                    points_selector=models.FilterSelector(filter=_filter(repository_id, None)),
-                    wait=True,
-                )
-        except Exception as error:
-            raise VectorIndexError(f"vector delete failed: {error}") from error
+    @abstractmethod
+    def delete_repository(self, repository_id: str) -> None: ...
 
-    # -------------------------------------------------------------------- reads
+    @abstractmethod
+    def count(self, repository_id: str) -> int: ...
 
-    def count(self, repository_id: str) -> int:
-        try:
-            with self._guard() as client:
-                if not client.collection_exists(self.collection):
-                    return 0
-                return int(
-                    client.count(self.collection, count_filter=_filter(repository_id, None), exact=True).count
-                )
-        except Exception as error:
-            raise VectorIndexError(f"vector count failed: {error}") from error
-
+    @abstractmethod
     def search(
         self,
         repository_id: str,
@@ -216,49 +100,201 @@ class VectorIndex:
         labels: Collection[str] | None = None,
     ) -> list[VectorHit]:
         """Hybrid search: dense and sparse candidates fused by reciprocal rank."""
-        if not query.strip():
-            return []
-        self.ensure_collection()
-        scope = _filter(repository_id, labels)
-        indices, values = sparse_vector(query, query=True)
-        prefetch = [
-            models.Prefetch(
-                query=self.embedder.embed_query(query), using=_DENSE, limit=limit * 3, filter=scope
-            )
-        ]
-        if indices:
-            prefetch.append(
-                models.Prefetch(
-                    query=models.SparseVector(indices=indices, values=values),
-                    using=_SPARSE,
-                    limit=limit * 3,
-                    filter=scope,
-                )
-            )
+
+
+# ------------------------------------------------------------------ in-process backend
+
+_sumprod: Callable[[Sequence[float], Sequence[float]], float] | None = getattr(math, "sumprod", None)
+
+
+def _dot(left: Sequence[float], right: Sequence[float]) -> float:
+    if _sumprod is not None:  # Python 3.12+: one C call instead of a Python-level loop
+        return _sumprod(left, right)
+    return float(sum(map(mul, left, right)))
+
+
+@dataclass(slots=True)
+class _Point:
+    label: str
+    dense: list[float]
+    sparse: dict[int, float]
+    payload: dict[str, Any]
+
+
+class MemoryVectorIndex(VectorIndex):
+    """Brute-force hybrid index held in process memory.
+
+    Dense vectors are L2-normalised on write so cosine similarity is a dot product.
+    Sparse scoring applies the same BM25-style IDF Qdrant uses, computed over the
+    repository being searched.
+    """
+
+    backend = "memory"
+    persistent = False
+
+    def __init__(self, embedder: Embedder) -> None:
+        self.embedder = embedder
+        self._lock = threading.RLock()
+        self._points: dict[str, dict[str, _Point]] = {}
+        #: Per repository: number of stored documents containing each sparse term.
+        self._frequencies: dict[str, Counter[int]] = {}
+
+    def ensure_collection(self) -> None:
+        return None
+
+    def ping(self) -> dict[str, Any]:
+        with self._lock:
+            points = sum(len(points) for points in self._points.values())
+        return {"backend": self.backend, "points": points, "embedder": self.embedder.name}
+
+    def close(self) -> None:
+        with self._lock:
+            self._points.clear()
+            self._frequencies.clear()
+
+    # ------------------------------------------------------------------- writes
+
+    def upsert(self, documents: Sequence[IndexDocument]) -> int:
+        if not documents:
+            return 0
         try:
-            with self._guard() as client:
-                response = client.query_points(
-                    self.collection,
-                    prefetch=prefetch,
-                    query=models.FusionQuery(fusion=models.Fusion.RRF),
-                    limit=limit,
-                    with_payload=True,
-                )
+            dense = self.embedder.embed_documents([document.text for document in documents])
         except Exception as error:
-            raise VectorIndexError(f"vector search failed: {error}") from error
-        hits: list[VectorHit] = []
-        for point in response.points:
-            payload = dict(point.payload or {})
-            node_id = str(payload.get("node_id") or "")
-            if node_id:
-                hits.append(VectorHit(node_id, float(point.score), str(payload.get("label") or ""), payload))
-        return hits
+            raise VectorIndexError(f"embedding failed: {error}") from error
+        with self._lock:
+            for document, vector in zip(documents, dense, strict=True):
+                points = self._points.setdefault(document.repository_id, {})
+                frequencies = self._frequencies.setdefault(document.repository_id, Counter())
+                previous = points.get(document.node_id)
+                if previous is not None:
+                    frequencies.subtract(previous.sparse.keys())
+                indices, values = sparse_vector(document.text)
+                sparse = dict(zip(indices, values, strict=True))
+                frequencies.update(sparse.keys())
+                points[document.node_id] = _Point(
+                    document.label,
+                    _normalised(vector),
+                    sparse,
+                    {
+                        **document.payload,
+                        "node_id": document.node_id,
+                        "repository_id": document.repository_id,
+                        "label": document.label,
+                    },
+                )
+        return len(documents)
+
+    def delete_repository(self, repository_id: str) -> None:
+        with self._lock:
+            self._points.pop(repository_id, None)
+            self._frequencies.pop(repository_id, None)
+
+    # -------------------------------------------------------------------- reads
+
+    def count(self, repository_id: str) -> int:
+        with self._lock:
+            return len(self._points.get(repository_id, ()))
+
+    def search(
+        self,
+        repository_id: str,
+        query: str,
+        *,
+        limit: int = 12,
+        labels: Collection[str] | None = None,
+    ) -> list[VectorHit]:
+        if not query.strip() or limit <= 0:
+            return []
+        try:  # outside the lock: a remote embedder may take a while
+            dense_query = _normalised(self.embedder.embed_query(query))
+        except Exception as error:
+            raise VectorIndexError(f"embedding failed: {error}") from error
+        wanted = set(labels) if labels else None
+        with self._lock:
+            stored = self._points.get(repository_id, {})
+            total = len(stored)
+            candidates = [
+                (node_id, point)
+                for node_id, point in stored.items()
+                if wanted is None or point.label in wanted
+            ]
+            frequencies = dict(self._frequencies.get(repository_id, {}))
+        if not candidates:
+            return []
+
+        prefetch = limit * _PREFETCH_FACTOR
+        by_meaning = sorted(
+            ((_dot(dense_query, point.dense), node_id) for node_id, point in candidates),
+            key=lambda item: (-item[0], item[1]),
+        )[:prefetch]
+        rankings = [[node_id for _, node_id in by_meaning]]
+
+        indices, values = sparse_vector(query, query=True)
+        if indices:
+            weights = {
+                index: value * _idf(total, frequencies.get(index, 0))
+                for index, value in zip(indices, values, strict=True)
+            }
+            lexical = []
+            for node_id, point in candidates:
+                score = sum(
+                    weight * point.sparse[index] for index, weight in weights.items() if index in point.sparse
+                )
+                if score > 0.0:
+                    lexical.append((score, node_id))
+            lexical.sort(key=lambda item: (-item[0], item[1]))
+            rankings.append([node_id for _, node_id in lexical[:prefetch]])
+
+        fused: dict[str, float] = {}
+        for ranking in rankings:
+            for rank, node_id in enumerate(ranking):
+                fused[node_id] = fused.get(node_id, 0.0) + 1.0 / (rank + _RRF_K)
+        best = sorted(fused.items(), key=lambda item: (-item[1], item[0]))[:limit]
+        return [
+            VectorHit(node_id, score, stored[node_id].label, dict(stored[node_id].payload))
+            for node_id, score in best
+        ]
 
 
-def _filter(repository_id: str, labels: Collection[str] | None) -> models.Filter:
-    must: list[Any] = [
-        models.FieldCondition(key="repository_id", match=models.MatchValue(value=repository_id))
-    ]
-    if labels:
-        must.append(models.FieldCondition(key="label", match=models.MatchAny(any=sorted(labels))))
-    return models.Filter(must=must)
+def _normalised(vector: Sequence[float]) -> list[float]:
+    norm = math.sqrt(_dot(vector, vector))
+    if norm == 0.0:
+        return [0.0] * len(vector)
+    return [value / norm for value in vector]
+
+
+def _idf(total: int, containing: int) -> float:
+    return math.log((total - containing + 0.5) / (containing + 0.5) + 1.0)
+
+
+# ---------------------------------------------------------------------------- factory
+
+
+def qdrant_available() -> bool:
+    return importlib.util.find_spec("qdrant_client") is not None
+
+
+def create_vector_index(
+    embedder: Embedder,
+    *,
+    backend: VectorBackend = "auto",
+    location: str | None = None,
+    api_key: str | None = None,
+) -> VectorIndex:
+    """Instantiate the configured backend.
+
+    ``location`` is the URL of a Qdrant server, a directory for embedded Qdrant or
+    ``":memory:"``. With ``backend="auto"`` a server URL always selects Qdrant; a
+    directory selects embedded Qdrant when the ``qdrant-client`` package is installed
+    and the in-process index otherwise.
+    """
+    is_server = bool(location) and str(location).startswith(("http://", "https://"))
+    if backend == "memory" or (backend == "auto" and not is_server and not qdrant_available()):
+        return MemoryVectorIndex(embedder)
+    if not qdrant_available():
+        raise VectorIndexError(
+            "the Qdrant backend needs the qdrant-client package: pip install 'archaeo-code[qdrant]'"
+        )
+    from rag_engine.qdrant_index import QdrantVectorIndex  # noqa: PLC0415 - optional dependency
+
+    return QdrantVectorIndex(embedder, location=location or ":memory:", api_key=api_key)

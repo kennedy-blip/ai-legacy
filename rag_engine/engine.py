@@ -5,20 +5,21 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
-
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langchain_core.output_parsers import StrOutputParser
+from typing import TYPE_CHECKING, Any
 
 from graph_engine.schema import NodeLabel, make_id
 from graph_engine.store import GraphStore
 from rag_engine.citations import verify
-from rag_engine.prompts import EXPLAIN_PROMPT
+from rag_engine.prompts import explain_prompt
 from rag_engine.report import build_report
 from rag_engine.retrieval import ContextPack, GraphRetriever
 from rag_engine.source import SourceReader
 from rag_engine.vector_index import VectorIndex
+
+if TYPE_CHECKING:  # LangChain is loaded only when a language model is configured
+    from langchain_core.language_models.chat_models import BaseChatModel
+    from langchain_core.messages import BaseMessage
+    from langchain_core.runnables import Runnable
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,11 @@ class RagEngine:
         self.llm = llm
         self.llm_label = llm_label if llm is not None else None
         self.retriever = retriever or GraphRetriever(store, index)
-        self._chain = (EXPLAIN_PROMPT | llm | StrOutputParser()) if llm is not None else None
+        self._chain: Runnable[dict[str, Any], str] | None = None
+        if llm is not None:
+            from langchain_core.output_parsers import StrOutputParser  # noqa: PLC0415
+
+            self._chain = explain_prompt() | llm | StrOutputParser()
 
     @property
     def mode(self) -> str:
@@ -72,6 +77,8 @@ class RagEngine:
 
     @staticmethod
     def _history(turns: Sequence[ChatTurn]) -> list[BaseMessage]:
+        from langchain_core.messages import AIMessage, HumanMessage  # noqa: PLC0415
+
         messages: list[BaseMessage] = []
         for turn in list(turns)[-_MAX_HISTORY_TURNS:]:
             content = turn.content[:_MAX_HISTORY_CHARS]

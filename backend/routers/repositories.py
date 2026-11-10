@@ -7,8 +7,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from backend import serializers
-from backend.deps import Repository, State
+from backend import demo, serializers
+from backend.deps import Repository, State, Writable
 from backend.jobs import JobConflictError
 from backend.schemas import IngestBody, ReingestBody
 from graph_engine.schema import NodeLabel
@@ -43,7 +43,7 @@ def list_repositories(state: State) -> list[dict[str, Any]]:
     return [serializers.repository(node) for node in nodes]
 
 
-@router.post("/repositories", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/repositories", status_code=status.HTTP_202_ACCEPTED, dependencies=[Writable])
 def ingest_repository(body: IngestBody, state: State) -> dict[str, Any]:
     """Queue ingestion of a repository. Poll the returned job for progress."""
     return _submit(
@@ -64,11 +64,21 @@ def get_repository(repository: Repository, state: State) -> dict[str, Any]:
     return serializers.repository(repository, counts, detail=True)
 
 
-@router.post("/repositories/{repository_id}/reingest", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/repositories/{repository_id}/reingest", status_code=status.HTTP_202_ACCEPTED, dependencies=[Writable]
+)
 def reingest_repository(
     repository: Repository, state: State, body: ReingestBody | None = None
 ) -> dict[str, Any]:
     """Re-read the repository at its source. Runtime telemetry already collected is kept."""
+    if repository.get("is_demo"):
+        # The demo may have come from its snapshot, whose recorded source is not a checkout.
+        settings = state.container.settings
+        try:
+            demo.build_demo_repository(settings.demo_path)
+        except demo.DemoUnavailableError as error:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(error)) from error
+        return _submit(state, demo.demo_request(settings))
     return _submit(
         state,
         IngestionRequest(
@@ -82,7 +92,9 @@ def reingest_repository(
     )
 
 
-@router.delete("/repositories/{repository_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/repositories/{repository_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Writable]
+)
 def delete_repository(repository: Repository, state: State) -> None:
     repository_id = repository.repository_id
     if any(job.active for job in state.jobs.list(repository_id, limit=20)):

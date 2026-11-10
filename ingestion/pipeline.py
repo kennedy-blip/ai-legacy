@@ -128,7 +128,10 @@ class IngestionPipeline:
         else:
             source = str(self._local_root(request.source))
         name = (request.name or default_name(source)).strip()[:120] or "repository"
-        return make_repository_id(name, source), name, source
+        # The bundled demo keeps one id on every installation, wherever its checkout lives, so
+        # links to it and its pre-computed snapshot stay valid.
+        identity = f"demo:{name}" if request.demo else source
+        return make_repository_id(name, identity), name, source
 
     def _local_root(self, raw: str) -> Path:
         try:

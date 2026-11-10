@@ -24,7 +24,7 @@ from ingestion.pipeline import IngestionOptions, IngestionPipeline, IngestionReq
 from rag_engine.embeddings import HashingEmbedder
 from rag_engine.indexer import RepositoryIndexer
 from rag_engine.source import SourceReader
-from rag_engine.vector_index import VectorIndex
+from rag_engine.vector_index import MemoryVectorIndex, VectorIndex
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BUILD_DEMO = REPO_ROOT / "examples" / "demo-monolith" / "build_history.py"
@@ -78,7 +78,7 @@ class Corpus:
 def ingest(source: Path, *, name: str | None = None, blame: bool = True) -> Corpus:
     store = SqliteGraphStore(":memory:")
     store.ensure_schema()
-    index = VectorIndex(HashingEmbedder())
+    index = MemoryVectorIndex(HashingEmbedder())
     options = IngestionOptions(
         workspace_dir=source.parent / "_workspace",
         allowed_local_roots=(source.parent,),

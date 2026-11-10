@@ -1,6 +1,7 @@
 """FastAPI application factory.
 
 Run with ``uvicorn backend.main:create_app --factory`` or ``archaeo serve``.
+Serverless hosts import the ready-made application from ``backend.vercel_app``.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ import logging
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,14 +21,16 @@ from backend import __version__
 from backend.container import Container
 from backend.demo import seed_demo
 from backend.deps import AppState, require_token
-from backend.jobs import JobManager
+from backend.jobs import JobManager, JobRecord
 from backend.routers import explain, graph, health, repositories, telemetry
 from backend.settings import Settings, get_settings
 from backend.telemetry.collector import TelemetryCollector
 from backend.telemetry.hub import TelemetryHub
+from graph_engine.models import GraphNode
 from graph_engine.schema import NodeLabel
 from graph_engine.store import GraphStoreError
 from rag_engine.engine import UnknownRepositoryError
+from rag_engine.indexer import RepositoryIndexer
 from rag_engine.vector_index import VectorIndexError
 
 logger = logging.getLogger(__name__)
@@ -64,15 +68,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.archaeo = state
         for warning in state.container.warnings:
             logger.warning(warning)
-        if settings.seed_demo:
+        if settings.read_only or settings.demo_source == "snapshot":
+            # Loading the demo snapshot takes milliseconds, and a host that freezes the process
+            # between requests would never finish a background thread: do it before serving.
+            await asyncio.to_thread(_warm_up, state)
+        else:
             # In a thread: building and ingesting the demo must not delay readiness.
-            threading.Thread(target=_seed_if_empty, args=(state,), name="seed-demo", daemon=True).start()
+            threading.Thread(target=_warm_up, args=(state,), name="warm-up", daemon=True).start()
         logger.info(
-            "Archaeo-Code %s ready: graph=%s jobs=%s answers=%s",
+            "Archaeo-Code %s ready: graph=%s vectors=%s jobs=%s answers=%s%s",
             __version__,
             settings.graph_backend,
+            state.container.index.backend if state.container.index is not None else "off",
             settings.job_backend,
             state.container.rag.mode,
+            " (read-only)" if settings.read_only else "",
         )
         try:
             yield
@@ -135,14 +145,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-def _seed_if_empty(state: AppState) -> None:
+def _warm_up(state: AppState) -> None:
+    """Start-up work that needs the stores: restore missing vectors, then seed an empty graph."""
+    container = state.container
     try:
-        existing = state.container.store.find_nodes(None, labels=[NodeLabel.REPOSITORY], limit=1)
+        repositories = container.store.find_nodes(None, labels=[NodeLabel.REPOSITORY], limit=500)
         pending = state.jobs.list(limit=1)
     except Exception:
-        logger.exception("could not check whether the demo repository is needed")
+        logger.exception("start-up checks failed; skipping vector restore and demo seeding")
         return
-    if not existing and not pending:
-        job = seed_demo(state.container.settings, state.jobs)
-        if job is not None:
-            logger.info("seeding the demo repository (job %s)", job.id)
+    _restore_vectors(container, repositories)
+    if container.settings.seed_demo and not repositories and not pending:
+        seeded = seed_demo(container, state.jobs)
+        if isinstance(seeded, JobRecord):
+            logger.info("seeding the demo repository (job %s)", seeded.id)
+
+
+def _restore_vectors(container: Container, repositories: list[GraphNode]) -> None:
+    """Index repositories that are in the graph but have no vectors.
+
+    This is the normal start of the in-process index, which keeps nothing across
+    restarts, and repairs a Qdrant collection that was dropped.
+    """
+    index = container.index
+    if index is None:
+        return
+    indexer = RepositoryIndexer(container.store, index)
+    for repository in repositories:
+        repository_id = repository.repository_id
+        if repository.get("status") != "ready":
+            continue
+        try:
+            if index.count(repository_id) > 0:
+                continue
+            workspace = repository.get("workspace_path")
+            written = indexer.index_repository(repository_id, Path(workspace) if workspace else None)
+            logger.info("rebuilt the semantic index of %s (%d scopes)", repository_id, written)
+        except Exception:
+            logger.exception("could not rebuild the semantic index of %s", repository_id)

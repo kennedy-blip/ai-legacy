@@ -63,6 +63,13 @@ _MAX_FOOTPRINT_FACTS: Final = 14
 _MAX_CALLEE_FACTS: Final = 12
 
 
+def _seen(neighbour: Neighbour) -> str:
+    """How a runtime relationship is worded: generated demo traffic must not read as an observation."""
+    if neighbour.edge.properties.get("agent") == "simulated":
+        return "seen in simulated traffic (not a real observation)"
+    return "observed at runtime"
+
+
 @dataclass(slots=True)
 class Fact:
     """One statement derived from the graph, phrased for a reader."""
@@ -571,12 +578,12 @@ class _PackBuilder:
 
         for neighbour in context.observed_callees[:5]:
             count = neighbour.edge.properties.get("count")
-            add("runtime", f"observed at runtime calling {neighbour.node.qualified_name} ({count} times)")
+            add("runtime", f"{_seen(neighbour)} calling {neighbour.node.qualified_name} ({count} times)")
         for neighbour in context.observed_callers[:5]:
             count = neighbour.edge.properties.get("count")
             add(
                 "runtime",
-                f"observed at runtime being called by {neighbour.node.qualified_name} ({count} times)",
+                f"{_seen(neighbour)} being called by {neighbour.node.qualified_name} ({count} times)",
             )
 
         history = self._history(context)

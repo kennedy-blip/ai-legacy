@@ -14,7 +14,7 @@ from rag_engine.embeddings import Embedder, HashingEmbedder, OpenAICompatibleEmb
 from rag_engine.engine import RagEngine
 from rag_engine.indexer import RepositoryIndexer
 from rag_engine.llm import LlmConfigurationError, build_chat_model
-from rag_engine.vector_index import VectorIndex
+from rag_engine.vector_index import VectorIndex, create_vector_index
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +60,17 @@ class Container:
         index: VectorIndex | None = None
         if settings.vector_enabled:
             try:
-                index = VectorIndex(
+                index = create_vector_index(
                     build_embedder(settings),
+                    backend=settings.vector_backend,
                     location=settings.qdrant_location,
                     api_key=settings.qdrant_api_key.get_secret_value() if settings.qdrant_api_key else None,
                 )
+                if not index.persistent and settings.embedding_provider != "hashing":
+                    warnings.append(
+                        "the in-process vector index re-embeds every repository at start-up; "
+                        "configure Qdrant to persist vectors from a paid embedding model"
+                    )
             except Exception as error:  # a broken vector store must not take the graph API down
                 logger.exception("vector index unavailable")
                 warnings.append(f"semantic index disabled: {error.__class__.__name__}: {str(error)[:200]}")

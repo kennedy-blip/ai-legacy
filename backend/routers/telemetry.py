@@ -12,7 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 
 from backend import serializers
-from backend.deps import AppState, Repository, State, websocket_authorized
+from backend.deps import AppState, Repository, State, Writable, websocket_authorized
 from backend.schemas import SimulateBody, TelemetryBody
 from backend.telemetry.collector import MAX_BATCH, IngestSummary
 from backend.telemetry.otlp import spans_to_events
@@ -53,14 +53,14 @@ def _ingest(state: AppState, repository_id: str, events: list[Any], source: str)
     return summary
 
 
-@router.post("/repositories/{repository_id}/telemetry/events")
+@router.post("/repositories/{repository_id}/telemetry/events", dependencies=[Writable])
 def post_events(repository: Repository, body: TelemetryBody, state: State) -> dict[str, Any]:
     """Report runtime calls and data access. See ``docs/telemetry.md`` for the event format."""
     _require_enabled(state)
     return _ingest(state, repository.repository_id, body.events, body.source).to_dict()
 
 
-@router.post("/repositories/{repository_id}/telemetry/otlp")
+@router.post("/repositories/{repository_id}/telemetry/otlp", dependencies=[Writable])
 def post_otlp(
     repository: Repository, state: State, payload: Annotated[dict[str, Any], Body()]
 ) -> dict[str, Any]:
@@ -72,7 +72,7 @@ def post_otlp(
     return _ingest(state, repository.repository_id, events, "otlp").to_dict()
 
 
-@router.post("/repositories/{repository_id}/telemetry/simulate")
+@router.post("/repositories/{repository_id}/telemetry/simulate", dependencies=[Writable])
 def simulate(repository: Repository, body: SimulateBody, state: State) -> dict[str, Any]:
     """Generate synthetic traffic from the static graph. Results are tagged ``simulated``."""
     _require_enabled(state)
@@ -88,7 +88,7 @@ def simulate(repository: Repository, body: SimulateBody, state: State) -> dict[s
     return summary
 
 
-@router.delete("/repositories/{repository_id}/telemetry")
+@router.delete("/repositories/{repository_id}/telemetry", dependencies=[Writable])
 def clear(repository: Repository, state: State) -> dict[str, Any]:
     """Remove every runtime observation of the repository. The static graph is untouched."""
     removed = state.container.store.delete_edges(repository.repository_id, RUNTIME_RELS)
@@ -224,8 +224,12 @@ async def telemetry_stream(websocket: WebSocket, repository_id: str = Query(max_
     known = await run_in_threadpool(
         state.container.store.get_node, make_id(NodeLabel.REPOSITORY, repository_id)
     )
-    if known is None or not state.container.settings.telemetry_enabled:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="unknown repository")
+    settings = state.container.settings
+    if known is None or not settings.telemetry_enabled or settings.read_only:
+        reason = (
+            "this instance is read-only" if known is not None and settings.read_only else "unknown repository"
+        )
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=reason)
         return
     await websocket.accept()
     queue = state.hub.subscribe(repository_id)

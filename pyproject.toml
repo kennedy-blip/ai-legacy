@@ -12,7 +12,8 @@ license = { text = "MIT" }
 dependencies = [
     # API
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
+    "uvicorn>=0.30",
+    "websockets>=13",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.6,<3",
     "httpx>=0.27",
@@ -24,20 +25,31 @@ dependencies = [
     "tree-sitter-typescript>=0.23",
     "tree-sitter-cpp>=0.23",
     "tree-sitter-sql>=0.3.8",
-    # Graph + vector stores
-    "neo4j>=6.0,<7",
-    "qdrant-client>=1.15,<2",
-    # Task queue
-    "celery[redis]>=5.5,<6",
-    "redis>=5",
-    # LLM orchestration
+    # LLM orchestration. Imported only once a model is configured.
     "langchain-core>=1.0,<2",
     "langchain-openai>=1.0,<2",
 ]
 
+# The core install runs everywhere, serverless hosts included: the graph lives in SQLite
+# and the semantic index in process memory. The extras add the server-grade backends.
 [project.optional-dependencies]
+neo4j = ["neo4j>=6.0,<7"]
+qdrant = ["qdrant-client>=1.15,<2"]
+workers = ["celery[redis]>=5.5,<6", "redis>=5"]
 anthropic = ["langchain-anthropic>=1.0,<2"]
+# Everything the Docker Compose stack uses.
+server = [
+    "neo4j>=6.0,<7",
+    "qdrant-client>=1.15,<2",
+    "celery[redis]>=5.5,<6",
+    "redis>=5",
+    "uvicorn[standard]>=0.30",
+]
 dev = [
+    "neo4j>=6.0,<7",
+    "qdrant-client>=1.15,<2",
+    "celery[redis]>=5.5,<6",
+    "redis>=5",
     "pytest>=8",
     "pytest-asyncio>=1.0",
     "ruff>=0.8",

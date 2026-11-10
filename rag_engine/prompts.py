@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from functools import lru_cache
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from langchain_core.prompts import ChatPromptTemplate
 
 SYSTEM_PROMPT = """\
 You are Archaeo-Code, an assistant that explains legacy code bases to the engineers who must maintain them.
@@ -36,10 +40,16 @@ QUESTION
 {question}\
 """
 
-EXPLAIN_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        ("system", SYSTEM_PROMPT),
-        MessagesPlaceholder("history", optional=True),
-        ("human", HUMAN_PROMPT),
-    ]
-)
+
+@lru_cache(maxsize=1)
+def explain_prompt() -> ChatPromptTemplate:
+    """The chat template. LangChain is imported here so it is only loaded when a model is configured."""
+    from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder  # noqa: PLC0415
+
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", SYSTEM_PROMPT),
+            MessagesPlaceholder("history", optional=True),
+            ("human", HUMAN_PROMPT),
+        ]
+    )

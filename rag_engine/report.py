@@ -21,7 +21,7 @@ _SECTIONS: tuple[tuple[str, str], ...] = (
     ("read", "Reads"),
     ("write", "Writes"),
     ("trigger", "Hidden side effects"),
-    ("runtime", "Observed at runtime"),
+    ("runtime", "Runtime"),
     ("history", "History"),
     ("structure", "Structure"),
 )

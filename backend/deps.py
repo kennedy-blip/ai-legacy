@@ -56,6 +56,20 @@ def require_token(
         )
 
 
+def require_writable(state: State) -> None:
+    """Refuse requests that change the graph on a read-only instance."""
+    if state.container.settings.read_only:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "this instance is read-only: it serves existing graphs and cannot ingest, delete or record "
+            "telemetry. Run Archaeo-Code yourself to analyse your own repositories.",
+        )
+
+
+#: Route dependency for every endpoint that writes.
+Writable = Depends(require_writable)
+
+
 def websocket_authorized(websocket: WebSocket) -> bool:
     """Browsers cannot set headers on WebSockets, so the token may also be a ``token`` query parameter."""
     state: AppState = websocket.app.state.archaeo

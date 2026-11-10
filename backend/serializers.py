@@ -80,12 +80,17 @@ def neighbour(item: Neighbour) -> dict[str, Any]:
     return {"node": node_brief(item.node), "edge": payload}
 
 
+#: Shown as the source of the bundled demo instead of the server path of its generated checkout.
+DEMO_SOURCE_LABEL: Final = "examples/demo-monolith"
+
+
 def repository(node: GraphNode, counts: GraphCounts | None = None, *, detail: bool = False) -> dict[str, Any]:
+    is_demo = bool(node.get("is_demo"))
     payload: dict[str, Any] = {
         "id": node.repository_id,
         "name": node.name,
-        "source": node.get("source"),
-        "source_kind": node.get("source_kind"),
+        "source": DEMO_SOURCE_LABEL if is_demo else node.get("source"),
+        "source_kind": "bundled" if is_demo else node.get("source_kind"),
         "branch": node.get("branch"),
         "head_commit": node.get("head_commit"),
         "status": node.get("status"),
@@ -96,7 +101,7 @@ def repository(node: GraphNode, counts: GraphCounts | None = None, *, detail: bo
         "classes": node.get("class_count", 0),
         "tables": node.get("table_count", 0),
         "lines": node.get("line_count", 0),
-        "is_demo": bool(node.get("is_demo")),
+        "is_demo": is_demo,
     }
     if detail:
         payload["warnings"] = node.get("warnings") or []
