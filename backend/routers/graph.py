@@ -94,6 +94,30 @@ def list_files(
     return {"files": files, "has_more": len(nodes) > limit}
 
 
+@router.get("/repositories/{repository_id}/entry-points")
+def entry_points(
+    repository: Repository,
+    state: State,
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Where execution enters the code base: HTTP handlers, mains, scheduled jobs, message consumers."""
+    nodes = state.container.store.find_nodes(
+        repository.repository_id, labels=[NodeLabel.FUNCTION], where={"is_entry_point": True}, limit=limit + 1
+    )
+    nodes = [node for node in nodes if not node.get("is_test")]
+    nodes.sort(
+        key=lambda node: (
+            str(node.get("entry_kind") or ""),
+            str(node.get("route") or ""),
+            node.qualified_name,
+        )
+    )
+    return {
+        "entry_points": [serializers.node_brief(node) for node in nodes[:limit]],
+        "has_more": len(nodes) > limit,
+    }
+
+
 @router.get("/repositories/{repository_id}/nodes/{node_id}")
 def get_node(repository: Repository, node_id: str, state: State) -> dict[str, Any]:
     """A node with its neighbourhood: callers, callees, data access, history."""

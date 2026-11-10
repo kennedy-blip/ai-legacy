@@ -109,7 +109,9 @@ class Container:
         """Component status; never raises."""
         components: dict[str, Any] = {}
         try:
-            components["graph"] = {"status": "ok", **self.store.ping()}
+            ping = self.store.ping()
+            ping.pop("path", None)  # where the database file lives is nobody's business but the operator's
+            components["graph"] = {"status": "ok", **ping}
         except Exception as error:
             components["graph"] = {"status": "error", "error": str(error)[:300]}
         if self.index is None:

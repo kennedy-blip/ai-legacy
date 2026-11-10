@@ -176,6 +176,7 @@ def node_context(context: NodeContext) -> dict[str, Any]:
                 "supertypes",
                 "subtypes",
                 "commits",
+                "touched",
                 "observed_callers",
                 "observed_callees",
             )

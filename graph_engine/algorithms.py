@@ -689,6 +689,8 @@ class NodeContext:
     subtypes: list[Neighbour] = field(default_factory=list)
     #: Commits that touched the node, newest first.
     commits: list[Neighbour] = field(default_factory=list)
+    #: For a commit: the files, classes and functions it changed that still carry its lines.
+    touched: list[Neighbour] = field(default_factory=list)
     observed_callers: list[Neighbour] = field(default_factory=list)
     observed_callees: list[Neighbour] = field(default_factory=list)
 
@@ -755,6 +757,8 @@ def node_context(store: GraphStore, node_id: str, *, min_confidence: float = 0.0
             context.triggers.append(neighbour)
         elif kind is RelType.INHERITS_FROM:
             context.subtypes.append(neighbour)
+        elif kind is RelType.TOUCHED_BY:
+            context.touched.append(neighbour)
         elif kind is RelType.OBSERVED_CALL:
             context.observed_callers.append(neighbour)
 
@@ -773,4 +777,7 @@ def node_context(store: GraphStore, node_id: str, *, min_confidence: float = 0.0
     ):
         setattr(context, name, _by_name(getattr(context, name)))
     context.commits.sort(key=lambda n: (str(n.node.get("authored_at") or ""), n.node.id), reverse=True)
+    context.touched.sort(
+        key=lambda n: (n.node.path or "", n.node.start_line or 0, n.node.label.value, n.node.id)
+    )
     return context
