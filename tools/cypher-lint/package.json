@@ -1,0 +1,13 @@
+{
+  "name": "archaeo-cypher-lint",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static syntax + semantic check of every Cypher statement Archaeo-Code can send to Neo4j.",
+  "type": "module",
+  "scripts": {
+    "lint": "node lint.mjs"
+  },
+  "devDependencies": {
+    "@neo4j-cypher/language-support": "2.0.0-next.6"
+  }
+}
