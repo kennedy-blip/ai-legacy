@@ -73,9 +73,6 @@ export function FlowTab() {
               <p className="max-w-4xl text-xs leading-relaxed text-faint">
                 Derived from source, not from a run: every call the code can make is shown in the order it is
                 written, ignoring conditions and loops. Click a step to open what it leads to.
-                {sequence.data.participants.length > 8
-                  ? ` Scroll sideways to see all ${sequence.data.participants.length} participants.`
-                  : ""}
                 {sequence.data.truncated ? " The diagram was cut at its step limit." : ""}
               </p>
             </div>

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { displayName, labelName, toneOf, TONE_HEX, truncate } from "@/lib/format";
 import type { GraphEdge, NodeBrief, RelType } from "@/lib/types";
+import { ScrollArea } from "@/ui/common/ScrollArea";
 
 export interface GraphColumn {
   id: string;
@@ -26,6 +27,8 @@ const GAP_X = 64;
 const GAP_Y = 10;
 const PAD = 16;
 const HEADER = 26;
+/** A graph wider than its panel is drawn smaller, down to this share of full size; beyond that it scrolls. */
+const MIN_SCALE = 0.72;
 
 interface Placed {
   node: NodeBrief;
@@ -240,14 +243,19 @@ export function LayeredGraph({ columns, edges, rootId, selectedId, onSelect, ari
   if (layout.visible.length === 0) return null;
 
   return (
-    <div className="overflow-auto">
+    <ScrollArea contentKey={`${layout.width}x${layout.height}`}>
       <svg
-        width={layout.width}
-        height={layout.height}
         viewBox={`0 0 ${layout.width} ${layout.height}`}
         role="img"
         aria-label={ariaLabel}
         className="block select-none"
+        style={{
+          width: "100%",
+          minWidth: Math.round(layout.width * MIN_SCALE),
+          maxWidth: layout.width,
+          height: "auto",
+          aspectRatio: `${layout.width} / ${layout.height}`,
+        }}
       >
         <defs>
           {(Object.keys(STROKE) as StrokeKind[]).map((kind) => (
@@ -376,7 +384,7 @@ export function LayeredGraph({ columns, edges, rootId, selectedId, onSelect, ari
           );
         })}
       </svg>
-    </div>
+    </ScrollArea>
   );
 }
 

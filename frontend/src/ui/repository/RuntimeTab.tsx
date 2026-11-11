@@ -156,7 +156,7 @@ export function RuntimeTab() {
               empty="Every observed call was also found in the source. Nothing hidden behind reflection or dynamic dispatch showed up in these traces."
               detail={(edge) => <span className="tabular-nums">{formatNumber(edge.count ?? 0)}×</span>}
             />
-            <Section title="In source, never observed" aside={plural(totals.never_observed_functions, "function")}>
+            <Section title="Called in source, never observed" aside={plural(totals.never_observed_functions, "function")}>
               {summary.never_observed.length ? (
                 <>
                   <ul className="max-h-80 divide-y divide-line overflow-auto">

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { TONE_HEX, truncate } from "@/lib/format";
 import type { Sequence, SequenceParticipant, SequenceStep } from "@/lib/types";
+import { ScrollArea } from "@/ui/common/ScrollArea";
 
 interface Props {
   sequence: Sequence;
@@ -70,7 +71,7 @@ export function SequenceDiagram({ sequence, onSelect }: Props) {
     });
 
   return (
-    <div className="overflow-auto">
+    <ScrollArea contentKey={`${width}x${height}`}>
       <svg
         width={width}
         height={height}
@@ -186,7 +187,7 @@ export function SequenceDiagram({ sequence, onSelect }: Props) {
           );
         })}
       </svg>
-    </div>
+    </ScrollArea>
   );
 }
 

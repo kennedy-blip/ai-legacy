@@ -60,7 +60,7 @@ export function Overview() {
             <ul className="max-h-72 divide-y divide-line overflow-auto">
               {entries.data.entry_points.map((node) => (
                 <li key={node.id}>
-                  <NodeRow node={node} tab="flow" subtitle={entrySubtitle(node)} />
+                  <NodeRow node={node} tab="flow" />
                 </li>
               ))}
             </ul>
@@ -151,7 +151,7 @@ export function Overview() {
         </Section>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid items-start gap-4 lg:grid-cols-3">
         <Section
           title="No caller found"
           aside={dead ? `${plural(dead.count, "function")} · ${formatNumber(dead.lines)} lines` : undefined}
@@ -165,7 +165,10 @@ export function Overview() {
               </p>
             </>
           ) : (
-            <Empty title="Every function has a caller or is an entry point" />
+            <Empty title="No dead-code candidate">
+              Accessors, tests and anything a framework or code outside the repository could call are not
+              counted, so this is not proof that everything is used.
+            </Empty>
           )}
         </Section>
 
@@ -175,12 +178,18 @@ export function Overview() {
               {insights.single_author_code.owners.map((owner) => (
                 <li key={owner.name} className="flex items-center justify-between px-3 py-2">
                   <span>{owner.name}</span>
-                  <span className="tabular-nums text-dim">{plural(owner.functions, "function")} only they touched</span>
+                  <span className="tabular-nums text-dim">{plural(owner.functions, "function")} written alone</span>
                 </li>
               ))}
+              <li className="px-3 py-2 text-xs text-faint">
+                Functions of 15 lines or more whose surviving lines all come from one author, according to git
+                blame.
+              </li>
             </ul>
           ) : (
-            <Empty title="No function has a single author" />
+            <Empty title="No larger function has a single author">
+              Counted: functions of 15 lines or more whose surviving lines all come from one author.
+            </Empty>
           )}
         </Section>
 
@@ -215,11 +224,6 @@ export function Overview() {
       </div>
     </div>
   );
-}
-
-function entrySubtitle(node: NodeBrief): string {
-  const route = node.http_method ? `${node.http_method} ${node.route ?? ""}`.trim() : (node.entry_kind ?? "entry");
-  return `${route} · ${node.location ?? ""}`;
 }
 
 function locationOf(item: InsightItem): string {

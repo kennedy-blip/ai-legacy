@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { api } from "@/lib/api";
 import { formatDate, formatNumber } from "@/lib/format";
@@ -61,6 +61,20 @@ export function Workspace() {
 
   const detail = repository.latest;
   const reload = repository.reload;
+
+  // On a narrow screen the tab strip scrolls sideways; keep the current tab in sight.
+  // Only the strip is moved, so the page's own scroll position is left alone.
+  const strip = useRef<HTMLDivElement>(null);
+  const ready = Boolean(detail);
+  useEffect(() => {
+    const container = strip.current;
+    const current = container?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!container || !current) return;
+    const box = container.getBoundingClientRect();
+    const item = current.getBoundingClientRect();
+    if (item.left < box.left) container.scrollLeft -= box.left - item.left + 16;
+    else if (item.right > box.right) container.scrollLeft += item.right - box.right + 16;
+  }, [tab, ready]);
   const value = useMemo<WorkspaceValue | null>(
     () =>
       detail
@@ -100,7 +114,7 @@ export function Workspace() {
       <div className="flex min-h-0 flex-1 flex-col">
         <RepositoryBar repository={detail} />
         <nav className="border-b border-line bg-ink" aria-label="Views">
-          <div className="mx-auto flex w-full max-w-[1600px] gap-1 overflow-x-auto px-3">
+          <div ref={strip} className="mx-auto flex w-full max-w-[1600px] gap-1 overflow-x-auto px-3">
             {TABS.map((item) => (
               <button
                 key={item.id}

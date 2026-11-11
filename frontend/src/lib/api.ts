@@ -22,6 +22,8 @@ import type {
 
 const BASE = "/api/v1";
 const TOKEN_KEY = "archaeo.api-token";
+/** Fired on `window` when the API answers 401, so the shell can ask for the token. */
+export const UNAUTHORIZED_EVENT = "archaeo:unauthorized";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -84,6 +86,7 @@ async function failure(response: Response): Promise<ApiError> {
   } catch {
     // Not JSON (a proxy error page, for example): keep the status line.
   }
+  if (response.status === 401 && typeof window !== "undefined") window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   return new ApiError(response.status, message);
 }
 

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { formatNumber, plural, TONE_HEX, truncate } from "@/lib/format";
 import type { Topology, TopologyGroup, TopologyLink } from "@/lib/types";
+import { ScrollArea } from "@/ui/common/ScrollArea";
 
 interface Props {
   topology: Topology;
@@ -178,7 +179,7 @@ export function TopologyMap({ topology, onSelectTable }: Props) {
   };
 
   return (
-    <div className="overflow-auto">
+    <ScrollArea contentKey={`${layout.width}x${layout.height}`}>
       <svg
         width={layout.width}
         height={layout.height}
@@ -236,7 +237,7 @@ export function TopologyMap({ topology, onSelectTable }: Props) {
         {layout.directories.map(box)}
         {layout.tables.map(box)}
       </svg>
-    </div>
+    </ScrollArea>
   );
 }
 

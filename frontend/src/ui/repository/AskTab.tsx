@@ -198,6 +198,21 @@ export function AskTab({ ref }: { ref?: Ref<AskHandle> }) {
 
   useImperativeHandle(ref, () => ({ ask: submit }), [submit]);
 
+  // A link can carry a question: ?tab=ask&q=… (optionally &node=…). It is asked once and
+  // then taken out of the address, so reloading or going back does not ask it again.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const query = new URLSearchParams(window.location.search);
+      const question = query.get("q")?.trim();
+      if (!question) return;
+      query.delete("q");
+      query.set("tab", "ask");
+      window.history.replaceState(null, "", `?${query.toString()}`);
+      submit(question, query.get("node"));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [submit]);
+
   const running = exchanges.some((exchange) => exchange.status === "running");
   const newestFirst = useMemo(() => [...exchanges].reverse(), [exchanges]);
   const shown = exchanges.find((exchange) => exchange.id === selected) ?? exchanges[exchanges.length - 1] ?? null;

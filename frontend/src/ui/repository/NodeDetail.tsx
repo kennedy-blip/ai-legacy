@@ -160,9 +160,14 @@ export function NodeDetail({ nodeId }: { nodeId: string }) {
         </Section>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid items-start gap-4 xl:grid-cols-2">
         <Relations title="Called by" items={data.callers} trailing={callInfo} empty={callersEmpty(node)} />
-        <Relations title="Calls" items={data.callees} trailing={callInfo} extra={<Unresolved node={node} />} />
+        <Relations
+          title="Calls"
+          items={data.callees}
+          trailing={callInfo}
+          extra={node.unresolved_calls?.length ? <Unresolved node={node} /> : undefined}
+        />
         <Relations title="Reads" items={data.reads} trailing={dataInfo} />
         <Relations title="Writes" items={data.writes} trailing={dataInfo} />
         <Relations title="Read by" items={data.readers} trailing={dataInfo} />

@@ -1,16 +1,18 @@
 import Link from "next/link";
 
+import { REPOSITORY_URL } from "@/lib/site";
+
 /** Top bar shared by every page. */
 export function Header() {
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-ink/85 backdrop-blur">
-      <div className="mx-auto flex h-12 w-full max-w-[1600px] items-center gap-4 px-4">
-        <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+      <div className="mx-auto flex h-12 w-full max-w-[1600px] items-center gap-2 px-3 sm:gap-4 sm:px-4">
+        <Link href="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight whitespace-nowrap">
           <Mark />
           <span>Archaeo-Code</span>
         </Link>
         <span className="hidden text-sm text-faint sm:inline">code archeology for legacy systems</span>
-        <nav className="ml-auto flex items-center gap-1 text-sm">
+        <nav className="ml-auto flex min-w-0 items-center text-sm sm:gap-1">
           <Link href="/" className="btn btn-ghost">
             Repositories
           </Link>
@@ -18,7 +20,7 @@ export function Header() {
             API
           </a>
           <a
-            href="https://github.com/kennedy-blip/ai-legacy"
+            href={REPOSITORY_URL}
             className="btn btn-ghost"
             target="_blank"
             rel="noreferrer"

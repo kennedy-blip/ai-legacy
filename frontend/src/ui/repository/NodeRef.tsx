@@ -36,8 +36,8 @@ export function NodeRow({
         <Dot tone={tone} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-mono text-[13px]">{displayName(node)}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <span className="max-w-full truncate font-mono text-[13px]">{displayName(node)}</span>
           <NodeFlags node={node} />
         </span>
         <span className="block truncate text-xs text-faint">

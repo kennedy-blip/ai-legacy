@@ -5,6 +5,7 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 import { formatNumber, plural } from "@/lib/format";
 import { useResource } from "@/lib/hooks";
+import { RUN_IT_YOURSELF_URL } from "@/lib/site";
 import type { Repository, SystemInfo } from "@/lib/types";
 import { Badge, Empty, ErrorNote, Spinner } from "@/ui/common/primitives";
 
@@ -84,7 +85,7 @@ function ReadOnlyNotice() {
         code, run the stack yourself:{" "}
         <a
           className="text-fg underline underline-offset-2"
-          href="https://github.com/kennedy-blip/ai-legacy#run-it-yourself"
+          href={RUN_IT_YOURSELF_URL}
           target="_blank"
           rel="noreferrer"
         >
