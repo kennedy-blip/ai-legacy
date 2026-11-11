@@ -10,7 +10,8 @@ The defaults below can be overridden with the usual ``ARCHAEO_*`` environment
 variables, e.g. ``ARCHAEO_LLM_PROVIDER`` / ``ARCHAEO_LLM_MODEL`` /
 ``ARCHAEO_LLM_API_KEY`` to have a language model write the explanations.
 
-To analyse your own repositories, run the full stack (``docker compose up``).
+To analyse your own repositories, run Archaeo-Code yourself: see "Run it yourself"
+in the README.
 """
 
 from __future__ import annotations

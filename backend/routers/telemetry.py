@@ -18,6 +18,7 @@ from backend.telemetry.collector import MAX_BATCH, IngestSummary
 from backend.telemetry.otlp import spans_to_events
 from backend.telemetry.simulator import simulate_events
 from graph_engine.algorithms import DEFAULT_MIN_CONFIDENCE
+from graph_engine.models import GraphNode
 from graph_engine.schema import RUNTIME_RELS, NodeLabel, RelType, make_id
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def _ingest(state: AppState, repository_id: str, events: list[Any], source: str)
 
 @router.post("/repositories/{repository_id}/telemetry/events", dependencies=[Writable])
 def post_events(repository: Repository, body: TelemetryBody, state: State) -> dict[str, Any]:
-    """Report runtime calls and data access. See ``docs/telemetry.md`` for the event format."""
+    """Report runtime calls and data access. ``backend.telemetry.collector`` documents the event format."""
     _require_enabled(state)
     return _ingest(state, repository.repository_id, body.events, body.source).to_dict()
 
@@ -127,20 +128,24 @@ def summary(
     ]
     shown = [*calls[:limit], *runtime_only[:limit], *uncertain[:limit], *data[:limit]]
 
-    # Functions static analysis says are called, but no trace ever reached.
-    never: list[str] = []
+    # Functions static analysis says are called, but no trace ever reached. Tests and
+    # accessors are left out: traces of a running system say nothing about them.
+    never: list[GraphNode] = []
     if calls:
         seen = {edge.target for edge in calls} | {edge.source for edge in calls}
+        unreached = {
+            target for (_, target), edge in static.items() if target not in seen and edge.confidence >= 0.5
+        }
         never = sorted(
-            {target for (_, target), edge in static.items() if target not in seen and edge.confidence >= 0.5}
+            (
+                node
+                for node in store.get_nodes(sorted(unreached))
+                if not node.get("is_test") and not node.get("is_boilerplate")
+            ),
+            key=lambda node: (node.qualified_name, node.id),
         )
-    wanted = {edge.source for edge in shown} | {edge.target for edge in shown} | set(never[: limit * 2])
+    wanted = {edge.source for edge in shown} | {edge.target for edge in shown}
     nodes = {node.id: node for node in store.get_nodes(sorted(wanted))}
-    never_nodes = [
-        nodes[node_id]
-        for node_id in never[: limit * 2]
-        if node_id in nodes and not nodes[node_id].get("is_test") and not nodes[node_id].get("is_boilerplate")
-    ][:limit]
 
     def row(edge: Any) -> dict[str, Any]:
         prediction = static.get((edge.source, edge.target))
@@ -178,7 +183,7 @@ def summary(
         "runtime_only": [row(edge) for edge in runtime_only[:limit]],
         "confirmed_guesses": [row(edge) for edge in uncertain[:limit]],
         "data_access": [row(edge) for edge in data[:limit]],
-        "never_observed": [serializers.node_brief(node) for node in never_nodes],
+        "never_observed": [serializers.node_brief(node) for node in never[:limit]],
         "nodes": {node_id: serializers.node_brief(node) for node_id, node in nodes.items()},
     }
 

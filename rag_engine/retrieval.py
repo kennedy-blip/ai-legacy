@@ -63,6 +63,12 @@ _MAX_FOOTPRINT_FACTS: Final = 14
 _MAX_CALLEE_FACTS: Final = 12
 
 
+_RUNTIME_DATA: Final = frozenset({RelType.OBSERVED_READ, RelType.OBSERVED_WRITE})
+#: Evidence added for a table: the SQL statements and the functions that touch it.
+_MAX_TABLE_STATEMENTS: Final = 4
+_MAX_TABLE_FUNCTIONS: Final = 6
+
+
 def _seen(neighbour: Neighbour) -> str:
     """How a runtime relationship is worded: generated demo traffic must not read as an observation."""
     if neighbour.edge.properties.get("agent") == "simulated":
@@ -158,6 +164,25 @@ class _Seed:
     node: GraphNode
     score: float
     reason: str
+
+
+_ENTRY_KINDS: Final = {
+    "http": "HTTP entry point",
+    "main": "program entry point",
+    "cli": "command-line entry point",
+    "scheduled": "scheduled entry point",
+    "message": "message-driven entry point",
+    "task": "background-task entry point",
+}
+
+
+def _entry_phrase(node: GraphNode, article: str) -> str:
+    """``an HTTP entry point`` / ``the scheduled entry point``."""
+    kind = str(node.get("entry_kind") or "")
+    phrase = _ENTRY_KINDS.get(kind) or f"{kind} entry point".strip()
+    if article == "a" and phrase.startswith(("HTTP", "a", "e", "i", "o", "u")):
+        article = "an"
+    return f"{article} {phrase}"
 
 
 def cite(node: GraphNode, line: int | None = None) -> str:
@@ -465,20 +490,23 @@ class _PackBuilder:
                 )
             )
         if node.label is NodeLabel.DATABASE_TABLE:
-            for neighbour in (context.writers + context.readers)[:5]:
-                target = neighbour.node
-                if target.label is NodeLabel.DATABASE_QUERY:
-                    self._put(self._query(target, score=seed.score * 0.8, reason=f"touches {name}"))
-                else:
-                    self._put(
-                        self._code(
-                            target,
-                            role="data",
-                            score=seed.score * 0.7,
-                            reason=f"touches {name}",
-                            max_lines=NEIGHBOUR_CODE_LINES,
-                        )
+            # Writers before readers. The same function can appear several times (its own
+            # edge, a runtime observation, its SQL statement), so count distinct nodes.
+            touching = {n.node.id: n.node for n in [*context.writers, *context.readers]}
+            statements = [n for n in touching.values() if n.label is NodeLabel.DATABASE_QUERY]
+            functions = [n for n in touching.values() if n.label is not NodeLabel.DATABASE_QUERY]
+            for target in statements[:_MAX_TABLE_STATEMENTS]:
+                self._put(self._query(target, score=seed.score * 0.8, reason=f"touches {name}"))
+            for target in functions[:_MAX_TABLE_FUNCTIONS]:
+                self._put(
+                    self._code(
+                        target,
+                        role="data",
+                        score=seed.score * 0.7,
+                        reason=f"touches {name}",
+                        max_lines=NEIGHBOUR_CODE_LINES,
                     )
+                )
 
     def _query(self, query: GraphNode, *, score: float, reason: str) -> Evidence:
         # The stored SQL is the statement as executed (string concatenation folded), so its
@@ -527,7 +555,7 @@ class _PackBuilder:
         if node.get("is_entry_point"):
             target = " ".join(str(part) for part in (node.get("http_method"), node.get("route")) if part)
             detail = f" {target}" if target else ""
-            add("entry", f"{name} is a {node.get('entry_kind')} entry point{detail} [{cite(node)}]")
+            add("entry", f"{name} is {_entry_phrase(node, 'a')}{detail} [{cite(node)}]")
         for container in context.containers:
             if container.label is NodeLabel.CLASS:
                 kind = container.get("kind") or "class"
@@ -563,10 +591,10 @@ class _PackBuilder:
             add("read", self._data_fact(node, neighbour, "reads"))
         for neighbour in context.writes[:8]:
             add("write", self._data_fact(node, neighbour, "writes"))
-        for neighbour in context.writers[:10]:
-            add("write", self._table_fact(neighbour, "written"))
-        for neighbour in context.readers[:10]:
-            add("read", self._table_fact(neighbour, "read"))
+        for text in self._table_facts(context.writers, "written")[:10]:
+            add("write", text)
+        for text in self._table_facts(context.readers, "read")[:10]:
+            add("read", text)
         if node.label is NodeLabel.DATABASE_TABLE:
             for neighbour in context.triggers:
                 events = "/".join(neighbour.edge.properties.get("events") or [])
@@ -631,12 +659,46 @@ class _PackBuilder:
         return text
 
     @staticmethod
-    def _table_fact(neighbour: Neighbour, verb: str) -> str:
-        other, edge = neighbour.node, neighbour.edge
-        operations = "/".join(edge.properties.get("operations") or [])
-        lines = edge.properties.get("lines") or []
-        owner = other.get("function_name") or other.qualified_name
-        return f"{verb} by {owner} ({operations}) [{cite(other, lines[0] if lines else None)}]"
+    def _table_facts(neighbours: list[Neighbour], verb: str) -> list[str]:
+        """Who reads or writes a table: one line per function and operation.
+
+        The graph can hold one access three times: on the function, on its SQL
+        statement and as a runtime observation. Listing each would triple the report
+        and push other code out of it, so they are folded into a single line that
+        cites the statement itself when there is one.
+        """
+        statements: dict[tuple[str, str], list[str]] = {}
+        enclosing: dict[tuple[str, str], str] = {}
+        runtime: dict[tuple[str, str], Neighbour] = {}
+        for neighbour in neighbours:
+            other, edge = neighbour.node, neighbour.edge
+            operations = "/".join(edge.properties.get("operations") or [])
+            key = (str(other.get("function_name") or other.qualified_name), operations)
+            if edge.type in _RUNTIME_DATA:
+                runtime[key] = neighbour
+                continue
+            lines = edge.properties.get("lines") or []
+            citation = f"[{cite(other, lines[0] if lines else None)}]"
+            if other.label is NodeLabel.DATABASE_QUERY:
+                found = statements.setdefault(key, [])
+                if citation not in found:
+                    found.append(citation)
+            else:
+                enclosing.setdefault(key, citation)
+
+        facts: list[str] = []
+        for key in dict.fromkeys([*statements, *enclosing]):
+            owner, operations = key
+            where = " ".join(statements.get(key) or [enclosing[key]])
+            facts.append(f"{verb} by {owner} ({operations}) {where}")
+        for key, neighbour in runtime.items():
+            if key not in statements and key not in enclosing:
+                owner, operations = key
+                facts.append(
+                    f"{verb} by {owner} ({operations}) - {_seen(neighbour)}, "
+                    f"no such access was found in source [{cite(neighbour.node)}]"
+                )
+        return facts
 
     def _trigger_evidence(self, trigger: GraphNode, table: str, score: float) -> None:
         """Show what a trigger does: its own code and that of the routine it delegates to."""
@@ -742,7 +804,7 @@ class _PackBuilder:
         entries.sort(key=lambda found: (up.depths.get(found.id, 9), found.qualified_name))
         for entry in entries[:5]:
             target = " ".join(str(part) for part in (entry.get("http_method"), entry.get("route")) if part)
-            label = f"{entry.get('entry_kind')} entry point {target}".strip()
+            label = f"{_entry_phrase(entry, 'the')} {target}".strip()
             facts.append(Fact("entry", f"reachable from {label} ({entry.qualified_name}) [{cite(entry)}]"))
         return facts
 

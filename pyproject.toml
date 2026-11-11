@@ -8,7 +8,6 @@ version = "0.1.0"
 description = "Legacy infrastructure & code archeology platform: Tree-sitter AST graph + Git archeology + runtime telemetry + grounded Graph-RAG."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
 dependencies = [
     # API
     "fastapi>=0.115",
@@ -37,7 +36,7 @@ neo4j = ["neo4j>=6.0,<7"]
 qdrant = ["qdrant-client>=1.15,<2"]
 workers = ["celery[redis]>=5.5,<6", "redis>=5"]
 anthropic = ["langchain-anthropic>=1.0,<2"]
-# Everything the Docker Compose stack uses.
+# Everything a multi-process installation uses: Neo4j, a Qdrant server and Celery workers.
 server = [
     "neo4j>=6.0,<7",
     "qdrant-client>=1.15,<2",
@@ -72,8 +71,6 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
 markers = [
     "neo4j: requires a live Neo4j (set ARCHAEO_TEST_NEO4J_URI)",
-    "qdrant: requires a live Qdrant server (set ARCHAEO_TEST_QDRANT_URL)",
-    "redis: requires a live Redis-compatible server (set ARCHAEO_TEST_REDIS_URL)",
 ]
 
 [tool.ruff]
@@ -92,7 +89,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "PLR", "B011", "E501", "PLC0415"]  # long literals are test data
-"scripts/**" = ["S"]
 "examples/**" = ["S"]
 "rag_engine/prompts.py" = ["E501"]  # prompt prose is not wrapped
 

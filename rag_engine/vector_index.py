@@ -293,7 +293,7 @@ def create_vector_index(
         return MemoryVectorIndex(embedder)
     if not qdrant_available():
         raise VectorIndexError(
-            "the Qdrant backend needs the qdrant-client package: pip install 'archaeo-code[qdrant]'"
+            "the Qdrant backend needs the qdrant-client package: pip install qdrant-client"
         )
     from rag_engine.qdrant_index import QdrantVectorIndex  # noqa: PLC0415 - optional dependency
 

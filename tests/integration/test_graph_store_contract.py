@@ -1,9 +1,9 @@
 """Behavioural contract every GraphStore backend must satisfy.
 
 The same assertions run against the embedded SQLite store (always) and against a
-live Neo4j when ``ARCHAEO_TEST_NEO4J_URI`` is set (CI does this with a service
-container). Retrieval algorithms are written once against the GraphStore
-interface, so this suite is what guarantees they behave identically on both.
+live Neo4j when ``ARCHAEO_TEST_NEO4J_URI`` is set. Retrieval algorithms are written
+once against the GraphStore interface, so this suite is what guarantees they behave
+identically on both.
 """
 
 from __future__ import annotations

@@ -104,10 +104,26 @@ class Settings(BaseSettings):
     def _lists(cls, value: Any) -> Any:
         return _split(value)
 
-    @field_validator("qdrant_url", "llm_base_url", "embedding_base_url", mode="before")
+    @field_validator(
+        "sqlite_path",
+        "workspace_dir",
+        "qdrant_url",
+        "qdrant_api_key",
+        "embedding_base_url",
+        "embedding_api_key",
+        "embedding_dimension",
+        "llm_api_key",
+        "llm_base_url",
+        "github_token",
+        "api_token",
+        mode="before",
+    )
     @classmethod
     def _blank_is_none(cls, value: Any) -> Any:
-        return value or None
+        """``ARCHAEO_API_TOKEN=`` in an env file means "not set", not an empty token."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

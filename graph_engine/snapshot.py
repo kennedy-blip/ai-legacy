@@ -17,7 +17,7 @@ import json
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import IO, Any, Final
 
 from graph_engine.models import GraphEdge, GraphNode
@@ -52,9 +52,10 @@ class SnapshotSummary:
 @contextmanager
 def _open(path: Path, mode: str) -> Iterator[IO[str]]:
     if path.suffix == ".gz":
-        # mtime=0 keeps the compressed bytes reproducible.
+        # No timestamp and no file name in the gzip header: the bytes depend on the graph only.
         with (
-            gzip.GzipFile(path, mode + "b", mtime=0) as raw,
+            path.open(mode + "b") as binary,
+            gzip.GzipFile(filename="", fileobj=binary, mode=mode + "b", mtime=0) as raw,
             io.TextIOWrapper(raw, encoding="utf-8", newline="\n") as handle,
         ):
             yield handle
@@ -91,9 +92,10 @@ def export_repository(
 ) -> SnapshotSummary:
     """Write the graph of ``repository_id`` to ``target``.
 
-    ``overrides`` replaces properties of the repository node in the export, e.g. to
-    record a portable ``source`` instead of a path on this machine (``None`` removes
-    a property). ``include_runtime=False`` leaves out relationships observed by
+    Paths of this machine are not exported: the checkout location is dropped and a
+    repository read from a local directory is recorded by the directory's name only.
+    ``overrides`` replaces properties of the repository node in the export (``None``
+    removes a property). ``include_runtime=False`` leaves out relationships observed by
     runtime telemetry. ``reproducible=True`` drops wall-clock values (when the
     ingestion ran and how long it took, when telemetry was first and last seen), so
     the file changes only when the graph does.
@@ -129,6 +131,9 @@ def export_repository(
             if node.id == root_id:
                 if reproducible:
                     properties = _without_clock(properties)
+                if properties.get("source_kind") == "local" and properties.get("source"):
+                    # A directory on this machine: keep its name, not where it lives.
+                    properties["source"] = PurePath(str(properties["source"])).name
                 properties.update(overrides or {})
                 properties = {key: value for key, value in properties.items() if value is not None}
             handle.write(

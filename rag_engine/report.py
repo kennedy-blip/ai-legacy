@@ -53,7 +53,7 @@ def build_report(pack: ContextPack) -> str:
     for item in focus[:3]:
         lines += ["", _headline(item)]
         if item.reason:
-            lines.append(f"_Selected because {item.reason}._")
+            lines.append(f"_Why it is listed: {item.reason}._")
         for kind, title in _SECTIONS:
             facts = [fact.text for fact in item.facts if fact.kind == kind]
             if facts:

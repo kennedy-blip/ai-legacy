@@ -53,7 +53,7 @@ def build_chat_model(config: LlmConfig) -> BaseChatModel | None:
             from langchain_openai import ChatOpenAI  # noqa: PLC0415
         except ImportError as error:
             raise LlmConfigurationError(
-                "the openai provider needs the langchain-openai package: pip install 'archaeo-code[llm]'"
+                "the openai provider needs the langchain-openai package: pip install langchain-openai"
             ) from error
 
         base_url = config.base_url
@@ -70,7 +70,7 @@ def build_chat_model(config: LlmConfig) -> BaseChatModel | None:
             from langchain_anthropic import ChatAnthropic  # noqa: PLC0415
         except ImportError as error:
             raise LlmConfigurationError(
-                "the anthropic provider needs the optional dependency: pip install 'archaeo-code[anthropic]'"
+                "the anthropic provider needs another package: pip install langchain-anthropic"
             ) from error
         if not config.api_key:
             raise LlmConfigurationError("ARCHAEO_LLM_API_KEY is required for the anthropic provider")
