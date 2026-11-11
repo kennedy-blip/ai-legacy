@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Archaeo-Code web interface
 
-## Getting Started
+The Next.js application that shows what the Archaeo-Code API knows about a repository. What the
+product does and how to run the whole thing is in the [README of the repository](../README.md).
 
-First, run the development server:
+## Run
+
+The API has to be running first (`archaeo serve`, see the main README). Then:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm ci
+npm run dev          # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Node.js 22 is required. The browser only ever talks to the origin that served the page; Next
+forwards `/api/*` to the API at `ARCHAEO_BACKEND_URL` (default `http://127.0.0.1:8000`).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+ARCHAEO_BACKEND_URL=http://127.0.0.1:8001 npm run dev      # an API on another port
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+For `npm run build` followed by `npm start`, the variable has to be set for the build: the
+forwarding rule is fixed at that point. On Vercel no rule is registered, because the platform
+routes `/api/*` to the Python service itself (see `vercel.json` in the repository root).
 
-## Learn More
+## Checks
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run lint
+npm run typecheck    # generates the route types, then runs tsc
+npm run build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Layout
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Path | Contents |
+| --- | --- |
+| `src/app/` | Routes: the home page and `r/[repo]` for one repository |
+| `src/lib/` | API client, types of the API responses, data hooks, formatting |
+| `src/ui/home/` | Repository list and the form that starts an analysis |
+| `src/ui/repository/` | The seven views of a repository and what they share |
+| `src/ui/visualizers/` | SVG diagrams: call graph, lineage, sequence, topology |
+| `src/ui/common/`, `src/ui/shell/` | Shared building blocks, header, API-token prompt |
 
-## Deploy on Vercel
+The address holds the state of a repository page: `?tab=` selects the view and `&node=` the
+selected node, so every view can be linked to. `?tab=ask&q=<question>` opens the Ask view and asks
+the question once.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`AGENTS.md` is written by Next.js for coding assistants and is kept as generated.
