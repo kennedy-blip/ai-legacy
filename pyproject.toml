@@ -1,0 +1,104 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "archaeo-code"
+version = "0.1.0"
+description = "Legacy infrastructure & code archeology platform: Tree-sitter AST graph + Git archeology + runtime telemetry + grounded Graph-RAG."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # API
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "websockets>=13",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+    "httpx>=0.27",
+    # AST parsing
+    "tree-sitter>=0.25,<0.27",
+    "tree-sitter-java>=0.23",
+    "tree-sitter-python>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+    "tree-sitter-cpp>=0.23",
+    "tree-sitter-sql>=0.3.8",
+    # LLM orchestration. Imported only once a model is configured.
+    "langchain-core>=1.0,<2",
+    "langchain-openai>=1.0,<2",
+]
+
+# The core install runs everywhere, serverless hosts included: the graph lives in SQLite
+# and the semantic index in process memory. The extras add the server-grade backends.
+[project.optional-dependencies]
+neo4j = ["neo4j>=6.0,<7"]
+qdrant = ["qdrant-client>=1.15,<2"]
+workers = ["celery[redis]>=5.5,<6", "redis>=5"]
+anthropic = ["langchain-anthropic>=1.0,<2"]
+# Everything a multi-process installation uses: Neo4j, a Qdrant server and Celery workers.
+server = [
+    "neo4j>=6.0,<7",
+    "qdrant-client>=1.15,<2",
+    "celery[redis]>=5.5,<6",
+    "redis>=5",
+    "uvicorn[standard]>=0.30",
+]
+dev = [
+    "neo4j>=6.0,<7",
+    "qdrant-client>=1.15,<2",
+    "celery[redis]>=5.5,<6",
+    "redis>=5",
+    "pytest>=8",
+    "pytest-asyncio>=1.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[project.scripts]
+archaeo = "backend.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["backend*", "parsers*", "graph_engine*", "ingestion*", "rag_engine*"]
+
+[tool.setuptools.package-data]
+graph_engine = ["cypher/*.cypher"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+markers = [
+    "neo4j: requires a live Neo4j (set ARCHAEO_TEST_NEO4J_URI)",
+    "servers: requires Neo4j, a Qdrant server and Redis (set ARCHAEO_TEST_NEO4J_URI, ARCHAEO_TEST_QDRANT_URL and ARCHAEO_TEST_REDIS_URL)",
+]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = ["frontend", "examples/demo-monolith/src", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "PL", "S"]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004",  # complexity/magic-number heuristics
+    "PLW2901",   # loop variable reassignment is used deliberately when normalising tokens
+    "S603", "S607",  # subprocess: git is invoked with argv lists, never through a shell
+    "S101",     # asserts are used for type narrowing
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "PLR", "B011", "E501", "PLC0415"]  # long literals are test data
+"examples/**" = ["S"]
+"rag_engine/prompts.py" = ["E501"]  # prompt prose is not wrapped
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+packages = ["backend", "parsers", "graph_engine", "ingestion", "rag_engine"]
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "kombu.*", "langchain_anthropic.*", "tree_sitter_sql.*", "tree_sitter_java.*", "tree_sitter_python.*", "tree_sitter_javascript.*", "tree_sitter_typescript.*", "tree_sitter_cpp.*"]
+ignore_missing_imports = true

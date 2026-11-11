@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Archaeo-Code runtime state (clones, embedded graph + vector stores)
+/data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Node / Next.js
+node_modules/
+/frontend/.next/
+/frontend/out/
+/frontend/next-env.d.ts
+*.tsbuildinfo
+.vercel
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

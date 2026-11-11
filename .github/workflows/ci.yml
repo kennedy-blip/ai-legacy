@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # Naming the shell turns on pipefail: a pipeline fails when any command in it fails.
+    shell: bash
+
+jobs:
+  backend:
+    name: Backend (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.14"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check backend parsers graph_engine ingestion rag_engine tests examples tools/ci
+      - run: ruff format --check backend parsers graph_engine ingestion rag_engine tests examples tools/ci
+      - run: mypy backend parsers graph_engine ingestion rag_engine
+      - id: tests
+        run: python -m pytest tests -q --junitxml=report.xml
+      - name: Report the test counts
+        if: ${{ !cancelled() && steps.tests.conclusion != 'skipped' }}
+        run: python tools/ci/junit_summary.py report.xml --title "Tests on Python ${{ matrix.python }}"
+
+  neo4j:
+    # The same graph-store contract and HTTP-level tests the backend job runs on SQLite,
+    # this time with the graph in a Neo4j server.
+    name: Tests on Neo4j (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["neo4j:5-community", "neo4j:community"]
+    services:
+      neo4j:
+        image: ${{ matrix.image }}
+        env:
+          NEO4J_AUTH: neo4j/archaeo-test
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p archaeo-test 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+    env:
+      ARCHAEO_TEST_NEO4J_URI: bolt://localhost:7687
+      ARCHAEO_TEST_NEO4J_USER: neo4j
+      ARCHAEO_TEST_NEO4J_PASSWORD: archaeo-test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - id: tests
+        run: python -m pytest tests -q -m neo4j --junitxml=report.xml
+      # Without a reachable server every one of these tests skips itself and pytest still
+      # succeeds, so the job checks that they all ran.
+      - name: Require that every test ran
+        if: ${{ !cancelled() && steps.tests.conclusion != 'skipped' }}
+        run: python tools/ci/junit_summary.py report.xml --title "${{ matrix.image }}" --require-all-ran
+
+  servers:
+    # The installation with every service external: the graph in Neo4j, the search index in a
+    # Qdrant server, ingestion in a Celery worker that takes its jobs from Redis. The test starts
+    # `archaeo worker` and `archaeo serve` and uses the HTTP API from outside.
+    name: Server installation (Neo4j, Qdrant, Redis, Celery)
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/archaeo-test
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p archaeo-test 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+      qdrant:
+        image: qdrant/qdrant
+        ports:
+          - 6333:6333
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ARCHAEO_TEST_NEO4J_URI: bolt://localhost:7687
+      ARCHAEO_TEST_NEO4J_USER: neo4j
+      ARCHAEO_TEST_NEO4J_PASSWORD: archaeo-test
+      ARCHAEO_TEST_QDRANT_URL: http://localhost:6333
+      ARCHAEO_TEST_REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - id: tests
+        run: python -m pytest tests -q -m servers --junitxml=report.xml
+      - name: Require that every test ran
+        if: ${{ !cancelled() && steps.tests.conclusion != 'skipped' }}
+        run: python tools/ci/junit_summary.py report.xml --title "Server installation" --require-all-ran
+
+  cypher:
+    name: Cypher syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: pip install -e .
+      - run: npm ci
+        working-directory: tools/cypher-lint
+      - run: python -m graph_engine.cypher_queries | node tools/cypher-lint/lint.mjs graph_engine/cypher/schema.cypher
+
+  frontend:
+    name: Web interface
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
