@@ -71,6 +71,7 @@ asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers"
 markers = [
     "neo4j: requires a live Neo4j (set ARCHAEO_TEST_NEO4J_URI)",
+    "servers: requires Neo4j, a Qdrant server and Redis (set ARCHAEO_TEST_NEO4J_URI, ARCHAEO_TEST_QDRANT_URL and ARCHAEO_TEST_REDIS_URL)",
 ]
 
 [tool.ruff]
