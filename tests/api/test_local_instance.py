@@ -1,4 +1,4 @@
-"""A self-hosted instance in its default mode: SQLite graph, in-process jobs, real ingestion."""
+"""A self-hosted instance: in-process jobs and real ingestion, on SQLite and (when configured) Neo4j."""
 
 from __future__ import annotations
 
@@ -15,7 +15,14 @@ from backend.demo import DEMO_REPOSITORY_ID
 from backend.main import API_PREFIX, create_app
 from backend.settings import Settings
 
-from .conftest import REPOSITORY, hosted_settings
+from .conftest import (
+    GRAPH_BACKENDS,
+    REPOSITORY,
+    graph_settings,
+    hosted_settings,
+    require_empty_database,
+    running,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="ingestion needs git")
 
@@ -30,9 +37,13 @@ def _wait_for_jobs(client: TestClient, timeout: float = 60.0) -> list[dict[str, 
         time.sleep(0.05)
 
 
-@pytest.fixture(scope="module")
-def local(tmp_path_factory: pytest.TempPathFactory, demo_repo: Path) -> Iterator[TestClient]:
+@pytest.fixture(scope="module", params=GRAPH_BACKENDS)
+def local(
+    request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, demo_repo: Path
+) -> Iterator[TestClient]:
     """Read-write instance; the demo is ingested from a git repository at start-up."""
+    backend: str = request.param
+    require_empty_database(backend)
     settings = Settings(
         data_dir=tmp_path_factory.mktemp("local"),
         demo_source="ingest",
@@ -40,8 +51,9 @@ def local(tmp_path_factory: pytest.TempPathFactory, demo_repo: Path) -> Iterator
         allowed_local_roots=[demo_repo.parent],
         github_enrichment=False,
         _env_file=None,
+        **graph_settings(backend),
     )
-    with TestClient(create_app(settings)) as client:
+    with running(settings) as client:
         _wait_for_jobs(client)
         yield client
 
@@ -190,7 +202,7 @@ def test_dangerous_sources_are_refused(local: TestClient, source: str) -> None:
         assert response.status_code in (400, 403, 422), response.text
 
 
-def test_api_token_protects_everything_but_health(tmp_path: Path) -> None:
+def test_api_token_protects_everything_but_health_and_the_api_reference(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path,
         api_token="s3cret",
@@ -199,8 +211,10 @@ def test_api_token_protects_everything_but_health(tmp_path: Path) -> None:
         _env_file=None,
     )
     with TestClient(create_app(settings)) as client:
-        assert client.get(f"{API_PREFIX}/health").status_code == 200
-        assert client.get(f"{API_PREFIX}/repositories").status_code == 401
+        for public in ("health", "docs", "openapi.json"):
+            assert client.get(f"{API_PREFIX}/{public}").status_code == 200, public
+        for protected in ("repositories", "system", "jobs"):
+            assert client.get(f"{API_PREFIX}/{protected}").status_code == 401, protected
         assert (
             client.get(f"{API_PREFIX}/repositories", headers={"Authorization": "Bearer wrong"}).status_code
             == 401

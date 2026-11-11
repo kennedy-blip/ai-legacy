@@ -116,7 +116,9 @@ class Neo4jGraphStore(GraphStore):
             info = self._driver.get_server_info()
         except (Neo4jError, DriverError) as exc:
             raise GraphStoreError(f"neo4j is unreachable: {exc}") from exc
-        return {"backend": "neo4j", "version": info.agent, "uri": self._uri, "database": self._database}
+        # The server introduces itself as "Neo4j/5.26.0"; report the number, as the SQLite store does.
+        version = info.agent.rpartition("/")[2]
+        return {"backend": "neo4j", "version": version, "uri": self._uri, "database": self._database}
 
     def close(self) -> None:
         self._driver.close()

@@ -110,7 +110,9 @@ class Container:
         components: dict[str, Any] = {}
         try:
             ping = self.store.ping()
-            ping.pop("path", None)  # where the database file lives is nobody's business but the operator's
+            # Where the database lives is nobody's business but the operator's.
+            for private in ("path", "uri", "database"):
+                ping.pop(private, None)
             components["graph"] = {"status": "ok", **ping}
         except Exception as error:
             components["graph"] = {"status": "error", "error": str(error)[:300]}

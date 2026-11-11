@@ -146,7 +146,7 @@ defaults; `backend/settings.py` is the definition. The ones most often needed:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `ARCHAEO_DATA_DIR` | `data` | Graph database, search index, cloned repositories |
-| `ARCHAEO_API_TOKEN` | not set | When set, every request except `/api/v1/health` must send `Authorization: Bearer <token>`. Required when `ARCHAEO_ENVIRONMENT=production` |
+| `ARCHAEO_API_TOKEN` | not set | When set, every request must send `Authorization: Bearer <token>`, except the health check `/api/v1/health` and the API reference (`/api/v1/docs`, `/api/v1/openapi.json`). Required when `ARCHAEO_ENVIRONMENT=production` |
 | `ARCHAEO_ALLOWED_GIT_HOSTS` | any | Hosts repositories may be cloned from, e.g. `github.com,git.example.com` |
 | `ARCHAEO_ALLOWED_LOCAL_ROOTS` | none | Server directories from which local repositories may be analysed |
 | `ARCHAEO_READ_ONLY` | `false` | Refuse ingestion, deletion and telemetry intake |
