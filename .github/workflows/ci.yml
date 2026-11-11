@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check backend parsers graph_engine ingestion rag_engine tests examples
+      - run: ruff format --check backend parsers graph_engine ingestion rag_engine tests examples
+      - run: mypy backend parsers graph_engine ingestion rag_engine
+      - run: python -m pytest tests -q
+
+  cypher:
+    name: Cypher syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pip install -e .
+      - run: npm ci
+        working-directory: tools/cypher-lint
+      - run: python -m graph_engine.cypher_queries | node tools/cypher-lint/lint.mjs graph_engine/cypher/schema.cypher
+
+  neo4j:
+    name: Graph-store contract on Neo4j
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env:
+          NEO4J_AUTH: neo4j/archaeo-test
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p archaeo-test 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-retries 30
+    env:
+      ARCHAEO_TEST_NEO4J_URI: bolt://localhost:7687
+      ARCHAEO_TEST_NEO4J_USER: neo4j
+      ARCHAEO_TEST_NEO4J_PASSWORD: archaeo-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/integration -q -m neo4j
+
+  frontend:
+    name: Web interface
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
