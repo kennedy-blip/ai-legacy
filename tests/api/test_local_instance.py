@@ -15,14 +15,7 @@ from backend.demo import DEMO_REPOSITORY_ID
 from backend.main import API_PREFIX, create_app
 from backend.settings import Settings
 
-from .conftest import (
-    GRAPH_BACKENDS,
-    REPOSITORY,
-    graph_settings,
-    hosted_settings,
-    require_empty_database,
-    running,
-)
+from .conftest import GRAPH_BACKENDS, REPOSITORY, graph_database, hosted_settings, running
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="ingestion needs git")
 
@@ -42,20 +35,19 @@ def local(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory, demo_repo: Path
 ) -> Iterator[TestClient]:
     """Read-write instance; the demo is ingested from a git repository at start-up."""
-    backend: str = request.param
-    require_empty_database(backend)
-    settings = Settings(
-        data_dir=tmp_path_factory.mktemp("local"),
-        demo_source="ingest",
-        vector_backend="memory",
-        allowed_local_roots=[demo_repo.parent],
-        github_enrichment=False,
-        _env_file=None,
-        **graph_settings(backend),
-    )
-    with running(settings) as client:
-        _wait_for_jobs(client)
-        yield client
+    with graph_database(request.param) as graph:
+        settings = Settings(
+            data_dir=tmp_path_factory.mktemp("local"),
+            demo_source="ingest",
+            vector_backend="memory",
+            allowed_local_roots=[demo_repo.parent],
+            github_enrichment=False,
+            _env_file=None,
+            **graph,
+        )
+        with running(settings) as client:
+            _wait_for_jobs(client)
+            yield client
 
 
 def test_demo_was_ingested_not_loaded(local: TestClient) -> None:
