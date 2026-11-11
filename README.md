@@ -126,7 +126,8 @@ pip install -e ".[server]"     # Neo4j driver, Qdrant client, Celery, Redis clie
 | `ARCHAEO_GRAPH_BACKEND=neo4j` with `ARCHAEO_NEO4J_URI`, `_USER`, `_PASSWORD` | Graph in Neo4j |
 | `ARCHAEO_JOB_BACKEND=celery` with `ARCHAEO_REDIS_URL` | Ingestion in worker processes started with `archaeo worker`; this needs a Qdrant server |
 
-Read [what has been run](#what-has-and-has-not-been-run) before relying on the last three.
+CI runs the last three together on the demo repository;
+[what has been run](#what-has-and-has-not-been-run) says what that does and does not show.
 
 To serve the web interface without the development server, the address of the API must be known
 when it is built:
@@ -247,7 +248,8 @@ and counted in `citation_summary`.
 ```bash
 pip install -e ".[dev]"
 python -m pytest tests -q
-ruff check backend parsers graph_engine ingestion rag_engine tests examples
+ruff check backend parsers graph_engine ingestion rag_engine tests examples tools/ci
+ruff format --check backend parsers graph_engine ingestion rag_engine tests examples tools/ci
 mypy backend parsers graph_engine ingestion rag_engine
 
 (cd tools/cypher-lint && npm ci)
@@ -256,9 +258,25 @@ python -m graph_engine.cypher_queries | node tools/cypher-lint/lint.mjs graph_en
 cd frontend && npm run lint && npm run typecheck && npm run build
 ```
 
-The suite needs git. 23 tests run the graph-store contract against Neo4j and are skipped unless
-`ARCHAEO_TEST_NEO4J_URI` (with `ARCHAEO_TEST_NEO4J_USER` and `ARCHAEO_TEST_NEO4J_PASSWORD`) points
-at a server.
+The suite needs git. Tests that need a server skip themselves until they are told where it is:
+
+| Variables | What then runs |
+| --- | --- |
+| `ARCHAEO_TEST_NEO4J_URI`, `ARCHAEO_TEST_NEO4J_USER`, `ARCHAEO_TEST_NEO4J_PASSWORD` | The graph-store contract, the HTTP API and the command line with the graph in Neo4j |
+| those three, `ARCHAEO_TEST_QDRANT_URL` and `ARCHAEO_TEST_REDIS_URL` | `archaeo serve` and `archaeo worker` as processes on Neo4j, a Qdrant server and Redis |
+
+Give them servers that hold nothing else. The tests refuse a Neo4j database that already contains
+repositories, and they remove the repositories they create.
+
+`.github/workflows/ci.yml` runs all of the above for every pull request and every push to `main`:
+
+- the Python checks and the suite on Python 3.11, 3.12 and 3.14;
+- the Neo4j tests against the images `neo4j:5-community` and `neo4j:community`;
+- the tests with every service external against `neo4j:5-community`, `qdrant/qdrant` and `redis:7`;
+- the Cypher syntax check, and lint, type check and build of the web interface on Node.js 22.
+
+A job that needs a server fails if one of its tests was skipped, so a server that did not start
+cannot pass unnoticed. Every job that runs the suite publishes its counts as a notice on the run.
 
 One test rebuilds the demo graph and compares it with the shipped file
 `examples/demo-monolith/graph-snapshot.jsonl`. After a change to a parser that alters the graph,
@@ -276,9 +294,8 @@ a language model can be enabled there. The project's production branch is `main`
 
 ## What has and has not been run
 
-Run and checked while building this:
+Run by hand while building this:
 
-- The test suite, the linters and type checks listed above.
 - The whole path on the demo repository and on `spring-projects/spring-petclinic`, cloned from
   GitHub: ingestion through the form and the command line, every view, simulated and posted
   telemetry, answers with verified citations, snapshot export and import between two instances.
@@ -287,17 +304,23 @@ Run and checked while building this:
 - The parsers for JavaScript, TypeScript and C / C++ in unit tests only. No complete repository in
   those languages was analysed.
 
-Written but never run, because the services were not available where this was built:
+Run by CI (see [Tests](#tests)), with the demo repository only:
 
-- **Neo4j.** The store is implemented and every Cypher statement it can send passes a static
-  syntax check, but it has not talked to a Neo4j server.
-- **A Qdrant server.** Only the embedded mode ran.
-- **Celery workers and Redis.**
+- **Neo4j**, version 5 and the current release. The graph-store contract; the HTTP API with
+  ingestion, telemetry and answers; the command line, including a snapshot that is exported from
+  Neo4j, imported into SQLite and has to give the same answer there.
+- **A Qdrant server, Redis and a Celery worker**, together with Neo4j. The worker analyses the
+  demo and a second copy of it; the API finds code through the search index and streams an answer
+  whose citations all hold; deleting a repository removes its graph and its vectors.
+
+The demo has 25 files and the test starts one worker. Nothing here shows how these services
+behave with a large repository, with several workers at once, or over weeks.
+
+Never run:
+
 - **Answers written by a language model.** No API key was available, so only graph reports were
   produced. The prompt, the streaming and the citation check after generation are untested with a
-  real model.
-
-Treat those four as unverified until you have tried them.
+  real model. Treat this as unverified until you have tried it.
 
 ## Limits
 

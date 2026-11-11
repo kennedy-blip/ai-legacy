@@ -93,17 +93,23 @@ class QdrantVectorIndex(VectorIndex):
         try:
             with self._guard() as client:
                 if not client.collection_exists(self.collection):
-                    client.create_collection(
-                        self.collection,
-                        vectors_config={
-                            _DENSE: models.VectorParams(
-                                size=self.embedder.dimension, distance=models.Distance.COSINE
-                            )
-                        },
-                        sparse_vectors_config={
-                            _SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)
-                        },
-                    )
+                    try:
+                        client.create_collection(
+                            self.collection,
+                            vectors_config={
+                                _DENSE: models.VectorParams(
+                                    size=self.embedder.dimension, distance=models.Distance.COSINE
+                                )
+                            },
+                            sparse_vectors_config={
+                                _SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)
+                            },
+                        )
+                    except Exception:
+                        # Several workers start on an empty server at once: one creates the
+                        # collection, the others are told that it exists. That is not a failure.
+                        if not client.collection_exists(self.collection):
+                            raise
                     if self.is_server:  # payload indexes are a no-op (and warn) in embedded mode
                         for key in ("repository_id", "label"):
                             client.create_payload_index(

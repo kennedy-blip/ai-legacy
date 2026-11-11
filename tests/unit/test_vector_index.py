@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 
@@ -106,3 +107,31 @@ def test_memory_index_agrees_with_embedded_qdrant(corpus: Corpus) -> None:
             assert len(set(ours) & set(theirs)) >= 4, f"{query}: {ours} vs {theirs}"
     finally:
         qdrant.close()
+
+
+@pytest.mark.skipif(not qdrant_available(), reason="qdrant-client is not installed")
+def test_a_collection_another_process_created_in_the_meantime_is_used() -> None:
+    """Two workers that start on an empty Qdrant server both try to create the collection."""
+    from qdrant_client import QdrantClient
+
+    from rag_engine.qdrant_index import QdrantVectorIndex
+    from rag_engine.vector_index import VectorIndexError
+
+    class LosesTheRace(QdrantClient):
+        def create_collection(self, *args: Any, **kwargs: Any) -> bool:
+            super().create_collection(*args, **kwargs)  # the other worker, a moment earlier
+            raise RuntimeError("Collection already exists!")
+
+    class Unreachable(QdrantClient):
+        def create_collection(self, *args: Any, **kwargs: Any) -> bool:
+            raise RuntimeError("connection refused")
+
+    late = QdrantVectorIndex(HashingEmbedder(), client=LosesTheRace(location=":memory:"))
+    late.upsert(DOCUMENTS)
+    assert late.count("billing") == 4
+    late.close()
+
+    broken = QdrantVectorIndex(HashingEmbedder(), client=Unreachable(location=":memory:"))
+    with pytest.raises(VectorIndexError):
+        broken.upsert(DOCUMENTS)
+    broken.close()
